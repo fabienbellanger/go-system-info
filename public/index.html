@@ -1,0 +1,555 @@
+<!doctype html>
+<html lang="fr">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Informations système</title>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link
+            href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap"
+            rel="stylesheet"
+        />
+        <style>
+            :root {
+                --bg: #0a0c10;
+                --bg-grad-1: #10131c;
+                --bg-grad-2: #0a0c10;
+                --card: rgba(22, 27, 38, 0.55);
+                --card-border: rgba(255, 255, 255, 0.07);
+                --card-border-hover: rgba(255, 255, 255, 0.15);
+                --text: #eef2f8;
+                --text-dim: #8b93a7;
+                --text-faint: #5a6172;
+                --accent: #6e8bff;
+                --green: #2ee6a0;
+                --orange: #ffb84d;
+                --red: #ff6b6b;
+                --track: rgba(255, 255, 255, 0.06);
+                --mono: "JetBrains Mono", ui-monospace, monospace;
+            }
+
+            * {
+                box-sizing: border-box;
+                margin: 0;
+                padding: 0;
+            }
+
+            html {
+                scroll-behavior: smooth;
+            }
+
+            body {
+                font-family:
+                    "Inter",
+                    -apple-system,
+                    BlinkMacSystemFont,
+                    "Segoe UI",
+                    sans-serif;
+                color: var(--text);
+                min-height: 100vh;
+                padding: 3rem 1.25rem;
+                line-height: 1.5;
+                background:
+                    radial-gradient(900px 600px at 12% -10%, rgba(110, 139, 255, 0.16), transparent 60%),
+                    radial-gradient(800px 600px at 100% 0%, rgba(46, 230, 160, 0.1), transparent 55%),
+                    linear-gradient(160deg, var(--bg-grad-1), var(--bg-grad-2));
+                background-attachment: fixed;
+                -webkit-font-smoothing: antialiased;
+            }
+
+            .container {
+                max-width: 1120px;
+                margin: 0 auto;
+            }
+
+            /* ---------- Header ---------- */
+            header {
+                display: flex;
+                align-items: flex-end;
+                justify-content: space-between;
+                flex-wrap: wrap;
+                gap: 1rem;
+                margin-bottom: 2.5rem;
+            }
+
+            .title-block h1 {
+                font-size: 1.75rem;
+                font-weight: 700;
+                letter-spacing: -0.02em;
+                display: flex;
+                align-items: center;
+                gap: 0.7rem;
+            }
+
+            .title-block .logo {
+                width: 38px;
+                height: 38px;
+                display: grid;
+                place-items: center;
+                border-radius: 11px;
+                font-size: 1.2rem;
+                background: linear-gradient(135deg, rgba(110, 139, 255, 0.25), rgba(46, 230, 160, 0.18));
+                border: 1px solid var(--card-border);
+                box-shadow: 0 6px 22px rgba(110, 139, 255, 0.18);
+            }
+
+            .status {
+                display: flex;
+                align-items: center;
+                gap: 0.55rem;
+                font-size: 0.82rem;
+                color: var(--text-dim);
+                padding: 0.5rem 0.85rem;
+            }
+
+            .dot {
+                position: relative;
+                flex-shrink: 0;
+                width: 8px;
+                height: 8px;
+                border-radius: 50%;
+                background: var(--green);
+            }
+
+            .dot::after {
+                content: "";
+                position: absolute;
+                inset: 0;
+                border-radius: 50%;
+                border: 1px solid var(--green);
+                transform-origin: center center;
+                animation: ripple 1.8s ease-out infinite;
+            }
+
+            .dot.error {
+                background: var(--red);
+            }
+
+            .dot.error::after {
+                border-color: var(--red);
+                animation: none;
+                opacity: 0;
+            }
+
+            @keyframes ripple {
+                0% {
+                    transform: scale(1);
+                    opacity: 1;
+                }
+                100% {
+                    transform: scale(3);
+                    opacity: 0;
+                }
+            }
+
+            /* ---------- Grid & Cards ---------- */
+            .grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+                gap: 1.4rem;
+            }
+
+            .card {
+                position: relative;
+                background: var(--card);
+                border: 1px solid var(--card-border);
+                border-radius: 18px;
+                padding: 1.6rem;
+                backdrop-filter: blur(16px);
+                -webkit-backdrop-filter: blur(16px);
+                overflow: hidden;
+                transition:
+                    border-color 0.3s,
+                    transform 0.3s,
+                    box-shadow 0.3s;
+                animation: rise 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+            }
+
+            .card:nth-child(2) {
+                animation-delay: 0.07s;
+            }
+            .card:nth-child(3) {
+                animation-delay: 0.14s;
+            }
+            .card:nth-child(4) {
+                animation-delay: 0.21s;
+            }
+
+            @keyframes rise {
+                from {
+                    opacity: 0;
+                    transform: translateY(16px);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateY(0);
+                }
+            }
+
+            .card::before {
+                content: "";
+                position: absolute;
+                inset: 0;
+                border-radius: inherit;
+                padding: 1px;
+                background: linear-gradient(180deg, rgba(255, 255, 255, 0.12), transparent 40%);
+                -webkit-mask:
+                    linear-gradient(#000 0 0) content-box,
+                    linear-gradient(#000 0 0);
+                -webkit-mask-composite: xor;
+                mask-composite: exclude;
+                pointer-events: none;
+            }
+
+            .card:hover {
+                border-color: var(--card-border-hover);
+                transform: translateY(-4px);
+                box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35);
+            }
+
+            .card-title {
+                display: flex;
+                align-items: center;
+                gap: 0.55rem;
+                font-size: 0.72rem;
+                font-weight: 600;
+                text-transform: uppercase;
+                letter-spacing: 0.09em;
+                color: var(--text-dim);
+                margin-bottom: 1.25rem;
+            }
+
+            .card-title .icon {
+                font-size: 1rem;
+            }
+
+            /* ---------- Circular gauge ---------- */
+            .gauge-wrap {
+                display: flex;
+                justify-content: center;
+                margin-bottom: 1.1rem;
+            }
+
+            .gauge {
+                position: relative;
+                width: 150px;
+                height: 150px;
+            }
+
+            .gauge svg {
+                width: 100%;
+                height: 100%;
+                transform: rotate(-90deg);
+                overflow: visible;
+            }
+
+            .gauge .track {
+                fill: none;
+                stroke: var(--track);
+                stroke-width: 11;
+            }
+
+            .gauge .progress {
+                fill: none;
+                stroke-width: 11;
+                stroke-linecap: round;
+                stroke-dasharray: 377;
+                stroke-dashoffset: 377;
+                transition:
+                    stroke-dashoffset 0.9s cubic-bezier(0.22, 1, 0.36, 1),
+                    stroke 0.5s;
+                filter: drop-shadow(0 0 6px currentColor);
+            }
+
+            .gauge-center {
+                position: absolute;
+                inset: 0;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+            }
+
+            .gauge-value {
+                font-family: var(--mono);
+                font-size: 2rem;
+                font-weight: 600;
+                font-variant-numeric: tabular-nums;
+                letter-spacing: -0.02em;
+            }
+
+            .gauge-value .pct {
+                font-size: 0.9rem;
+                color: var(--text-dim);
+                margin-left: 1px;
+            }
+
+            .gauge-label {
+                font-size: 0.66rem;
+                text-transform: uppercase;
+                letter-spacing: 0.1em;
+                color: var(--text-faint);
+                margin-top: 2px;
+            }
+
+            .detail {
+                text-align: center;
+                font-size: 0.82rem;
+                color: var(--text-dim);
+                font-family: var(--mono);
+                font-variant-numeric: tabular-nums;
+                min-height: 1.2em;
+            }
+
+            .detail .sub {
+                display: block;
+                font-family: "Inter", sans-serif;
+                font-size: 0.74rem;
+                color: var(--text-faint);
+                margin-top: 0.3rem;
+            }
+
+            /* ---------- Host card ---------- */
+            .host-card {
+                grid-column: span 1;
+            }
+
+            .info-list {
+                list-style: none;
+            }
+
+            .info-list li {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 1rem;
+                padding: 0.62rem 0;
+                border-bottom: 1px solid var(--card-border);
+                font-size: 0.88rem;
+            }
+
+            .info-list li:last-child {
+                border-bottom: none;
+            }
+
+            .info-list .key {
+                color: var(--text-dim);
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+            }
+
+            .info-list .val {
+                text-align: right;
+                font-family: var(--mono);
+                font-weight: 500;
+                word-break: break-word;
+            }
+
+            footer {
+                margin-top: 2.75rem;
+                text-align: center;
+                font-size: 0.78rem;
+                color: var(--text-faint);
+            }
+
+            footer code {
+                font-family: var(--mono);
+                color: var(--text-dim);
+                background: var(--card);
+                padding: 0.1rem 0.45rem;
+                border-radius: 6px;
+                border: 1px solid var(--card-border);
+            }
+
+            @media (max-width: 560px) {
+                body {
+                    padding: 2rem 1rem;
+                }
+            }
+        </style>
+    </head>
+
+    <body>
+        <div class="container">
+            <header>
+                <div class="title-block">
+                    <h1><span class="logo">🖥️</span> Informations système</h1>
+                </div>
+                <div class="status" id="status" title="Connexion…">
+                    <span class="dot" id="status-dot"></span>
+                </div>
+            </header>
+
+            <div class="grid">
+                <!-- CPU -->
+                <div class="card">
+                    <div class="card-title"><span class="icon">⚙️</span> Processeur</div>
+                    <div class="gauge-wrap">
+                        <div class="gauge">
+                            <svg viewBox="0 0 150 150">
+                                <circle class="track" cx="75" cy="75" r="60" />
+                                <circle class="progress" id="cpu-arc" cx="75" cy="75" r="60" />
+                            </svg>
+                            <div class="gauge-center">
+                                <div class="gauge-value"><span id="cpu-value">—</span><span class="pct">%</span></div>
+                                <div class="gauge-label">CPU</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="detail" id="cpu-detail">—</div>
+                </div>
+
+                <!-- RAM -->
+                <div class="card">
+                    <div class="card-title"><span class="icon">🧠</span> Mémoire vive</div>
+                    <div class="gauge-wrap">
+                        <div class="gauge">
+                            <svg viewBox="0 0 150 150">
+                                <circle class="track" cx="75" cy="75" r="60" />
+                                <circle class="progress" id="mem-arc" cx="75" cy="75" r="60" />
+                            </svg>
+                            <div class="gauge-center">
+                                <div class="gauge-value"><span id="mem-value">—</span><span class="pct">%</span></div>
+                                <div class="gauge-label">RAM</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="detail" id="mem-detail">—</div>
+                </div>
+
+                <!-- Disque -->
+                <div class="card">
+                    <div class="card-title"><span class="icon">🗄️</span> Disque</div>
+                    <div class="gauge-wrap">
+                        <div class="gauge">
+                            <svg viewBox="0 0 150 150">
+                                <circle class="track" cx="75" cy="75" r="60" />
+                                <circle class="progress" id="disk-arc" cx="75" cy="75" r="60" />
+                            </svg>
+                            <div class="gauge-center">
+                                <div class="gauge-value"><span id="disk-value">—</span><span class="pct">%</span></div>
+                                <div class="gauge-label">Disque</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="detail" id="disk-detail">—</div>
+                </div>
+
+                <!-- Hôte -->
+                <div class="card host-card">
+                    <div class="card-title"><span class="icon">🏷️</span> Hôte</div>
+                    <ul class="info-list" id="host-list">
+                        <li><span class="key">Chargement…</span></li>
+                    </ul>
+                </div>
+            </div>
+
+            <footer>
+                Actualisation automatique toutes les <span id="refresh-label">3 s</span> · API <code>/api/system</code>
+            </footer>
+        </div>
+
+        <script>
+            const DEFAULT_REFRESH_MS = 3000; // valeur de repli si /api/config est indisponible
+            const CIRCUMFERENCE = 2 * Math.PI * 60; // r = 60
+
+            // Couleur selon le seuil d'utilisation.
+            function colorFor(pct) {
+                if (pct >= 90) return "var(--red)";
+                if (pct >= 70) return "var(--orange)";
+                return "var(--green)";
+            }
+
+            function updateGauge(prefix, pct, detail, sub) {
+                const value = document.getElementById(`${prefix}-value`);
+                const arc = document.getElementById(`${prefix}-arc`);
+                const det = document.getElementById(`${prefix}-detail`);
+                const color = colorFor(pct);
+
+                value.textContent = pct.toFixed(0);
+                arc.style.color = color; // alimente le drop-shadow
+                arc.style.stroke = color;
+                arc.style.strokeDashoffset = CIRCUMFERENCE * (1 - Math.min(pct, 100) / 100);
+                det.innerHTML = detail + (sub ? `<span class="sub">${sub}</span>` : "");
+            }
+
+            function formatUptime(seconds) {
+                const d = Math.floor(seconds / 86400);
+                const h = Math.floor((seconds % 86400) / 3600);
+                const m = Math.floor((seconds % 3600) / 60);
+                const parts = [];
+                if (d) parts.push(`${d} j`);
+                if (h) parts.push(`${h} h`);
+                parts.push(`${m} min`);
+                return parts.join(" ");
+            }
+
+            function setStatus(ok, text) {
+                document.getElementById("status-dot").classList.toggle("error", !ok);
+                // Le texte n'est plus affiché : conservé en infobulle au survol du badge.
+                document.getElementById("status").title = text;
+            }
+
+            async function refresh() {
+                try {
+                    const res = await fetch("/api/system", { cache: "no-store" });
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    const data = await res.json();
+
+                    updateGauge("cpu", data.cpu.used_percent, `${data.cpu.cores} cœurs`, data.cpu.model_name || "CPU");
+
+                    updateGauge(
+                        "mem",
+                        data.memory.used_percent,
+                        `${data.memory.used_gb.toFixed(1)} / ${data.memory.total_gb.toFixed(1)} Go`,
+                        `${data.memory.free_gb.toFixed(1)} Go libres`,
+                    );
+
+                    updateGauge(
+                        "disk",
+                        data.disk.used_percent,
+                        `${data.disk.used_gb.toFixed(0)} / ${data.disk.total_gb.toFixed(0)} Go`,
+                        `Montage ${data.disk.path}`,
+                    );
+
+                    const host = data.host;
+                    document.getElementById("host-list").innerHTML = `
+          <li><span class="key">🏠 Nom</span><span class="val">${host.hostname || "—"}</span></li>
+          <li><span class="key">🖥️ Système</span><span class="val">${host.platform || host.os || "—"}</span></li>
+          <li><span class="key">🏗️ Architecture</span><span class="val">${host.kernel_arch || "—"}</span></li>
+          <li><span class="key">⏱️ Uptime</span><span class="val">${formatUptime(host.uptime_seconds)}</span></li>
+          <li><span class="key">🐹 Go</span><span class="val">${host.go_version || "—"}</span></li>
+        `;
+
+                    const time = new Date(data.timestamp).toLocaleTimeString("fr-FR");
+                    setStatus(true, `Mis à jour à ${time}`);
+                } catch (err) {
+                    setStatus(false, `Hors ligne : ${err.message}`);
+                }
+            }
+
+            // Récupère l'intervalle de rafraîchissement défini côté serveur (flag -r).
+            async function resolveRefreshMs() {
+                try {
+                    const res = await fetch("/api/config", { cache: "no-store" });
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    const cfg = await res.json();
+                    if (cfg.refresh_ms > 0) return cfg.refresh_ms;
+                } catch (_) {
+                    // ignoré : on retombe sur la valeur par défaut
+                }
+                return DEFAULT_REFRESH_MS;
+            }
+
+            (async () => {
+                const intervalMs = await resolveRefreshMs();
+                const footer = document.getElementById("refresh-label");
+                if (footer) footer.textContent = `${intervalMs / 1000} s`;
+                await refresh();
+                setInterval(refresh, intervalMs);
+            })();
+        </script>
+    </body>
+</html>

@@ -1,0 +1,36 @@
+# Binaires compilés
+/systeminfo
+/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Tests & couverture
+*.test
+*.out
+cover.out
+coverage.*
+
+# Profilage Go
+*.prof
+
+# Go workspace
+go.work
+go.work.sum
+
+# Dépendances vendored (optionnel)
+/vendor/
+
+# Fichiers d'environnement
+.env
+.env.local
+
+# Système / éditeurs
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
