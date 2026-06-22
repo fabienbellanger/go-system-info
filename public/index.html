@@ -310,6 +310,16 @@
                 margin-top: 0.3rem;
             }
 
+            .detail .note {
+                display: block;
+                font-family: "Inter", sans-serif;
+                font-size: 0.68rem;
+                color: var(--text-faint);
+                opacity: 0.7;
+                margin-top: 0.2rem;
+                cursor: help;
+            }
+
             /* ---------- Host card ---------- */
             .host-card {
                 grid-column: span 1;
@@ -389,6 +399,7 @@
                     <div class="gauge-wrap">
                         <div class="gauge">
                             <svg viewBox="0 0 150 150">
+                                <title>Jauge d'utilisation du processeur</title>
                                 <circle class="track" cx="75" cy="75" r="60" />
                                 <circle class="progress" id="cpu-arc" cx="75" cy="75" r="60" />
                             </svg>
@@ -407,6 +418,7 @@
                     <div class="gauge-wrap">
                         <div class="gauge">
                             <svg viewBox="0 0 150 150">
+                                <title>Jauge d'utilisation de la mémoire vive</title>
                                 <circle class="track" cx="75" cy="75" r="60" />
                                 <circle class="progress" id="mem-arc" cx="75" cy="75" r="60" />
                             </svg>
@@ -425,6 +437,7 @@
                     <div class="gauge-wrap">
                         <div class="gauge">
                             <svg viewBox="0 0 150 150">
+                                <title>Jauge d'utilisation du disque</title>
                                 <circle class="track" cx="75" cy="75" r="60" />
                                 <circle class="progress" id="disk-arc" cx="75" cy="75" r="60" />
                             </svg>
@@ -510,8 +523,8 @@
                     updateGauge(
                         "disk",
                         data.disk.used_percent,
-                        `${data.disk.used_gb.toFixed(0)} / ${data.disk.total_gb.toFixed(0)} Go`,
-                        `Montage ${data.disk.path}`,
+                        `${(data.disk.total_gb - data.disk.used_gb).toFixed(0)} / ${data.disk.total_gb.toFixed(0)} Go restant`,
+                        `Montage ${data.disk.path}<span class="note" title="L'espace purgeable (snapshots Time Machine locaux, caches récupérables automatiquement par macOS) n'est pas compté comme disponible ici, contrairement au Finder ou à CleanMyMac. La valeur reflète l'espace réellement libre au sens du système de fichiers.">ℹ️ Espace purgeable non inclus</span>`,
                     );
 
                     const host = data.host;
