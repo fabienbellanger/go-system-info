@@ -4,9 +4,12 @@ Petit serveur web en Go qui expose les informations système de la machine (CPU,
 mémoire vive, disque, hôte) via une **API REST** et les affiche dans une
 **interface web moderne au thème sombre**.
 
-L'interface HTML est **embarquée dans le binaire** grâce à `//go:embed` : le
-binaire compilé est autonome, aucun fichier externe n'est nécessaire pour le
-déployer.
+L'interface web (HTML, CSS et JS) est **embarquée dans le binaire** grâce à
+`//go:embed` : le binaire compilé est autonome, aucun fichier externe n'est
+nécessaire pour le déployer.
+
+Le code est organisé en packages : la collecte des métriques (`internal/sysinfo`)
+est séparée du serveur HTTP et du routage (`internal/server`).
 
 ## Aperçu
 
@@ -38,8 +41,19 @@ Le serveur démarre sur le port `8080`. Ouvrez ensuite votre navigateur sur :
 
 > http://localhost:8080
 
-Le binaire compilé contient l'interface HTML : vous pouvez le copier seul sur
+Le binaire compilé contient l'interface web : vous pouvez le copier seul sur
 une autre machine et l'exécuter sans dépendances supplémentaires.
+
+> Un `Makefile` regroupe les tâches courantes. Par exemple :
+>
+> ```bash
+> make serve              # go run avec port et intervalle configurables
+> make watch              # relance automatique au changement (watchexec)
+> make test               # tests avec détecteur de data races
+> make test-cover         # tests + rapport de couverture
+> make lint               # go fmt + go vet
+> make build-all          # binaires Linux, macOS (arm64/amd64) et Windows dans dist/
+> ```
 
 ### Options de ligne de commande
 
@@ -116,9 +130,18 @@ curl http://localhost:8080/api/system
 
 ```
 systeminfo/
-├── main.go            # Serveur HTTP, API REST et collecte des métriques
-├── public/
-│   └── index.html     # Interface web (thème sombre), embarquée via //go:embed
+├── main.go                    # Point d'entrée : flags, //go:embed et démarrage du serveur
+├── internal/
+│   ├── sysinfo/
+│   │   ├── sysinfo.go         # Collecte des métriques (CPU, mémoire, disque, hôte)
+│   │   └── sysinfo_test.go    # Tests du package sysinfo
+│   └── server/
+│       ├── server.go          # Serveur HTTP, routage et API REST
+│       └── server_test.go     # Tests du package server
+├── public/                    # Interface web embarquée via //go:embed
+│   ├── index.html             # Structure de la page (thème sombre)
+│   ├── styles.css             # Styles
+│   └── app.js                 # Logique d'actualisation et appels API
 ├── Makefile
 ├── go.mod
 ├── go.sum
@@ -142,4 +165,4 @@ systeminfo/
 
 - **Port** : via l'option `-p` au lancement (voir [Options de ligne de commande](#options-de-ligne-de-commande)).
 - **Intervalle de rafraîchissement** : via l'option `-r` au lancement (durée Go, ex. `30s`).
-- **Partition disque** : par défaut `/`, modifiable dans `collectSystemInfo()`.
+- **Partition disque** : par défaut `/`, modifiable dans `Collect()` (`internal/sysinfo/sysinfo.go`).

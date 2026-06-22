@@ -2,7 +2,9 @@
 package sysinfo
 
 import (
+	"context"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/shirou/gopsutil/v4/cpu"
@@ -58,16 +60,30 @@ type Disk struct {
 	Path        string  `json:"path"`
 }
 
-// Collect récupère les métriques système courantes.
+// Collect récupère les métriques système courantes en mesurant le CPU de
+// façon synchrone (appel bloquant pendant cpuSampleInterval). Pratique pour
+// un relevé ponctuel ; un serveur lui préférera un Collector mis en cache.
 func Collect() (*Info, error) {
+	percent, err := cpu.Percent(cpuSampleInterval, false)
+	if err != nil {
+		return nil, err
+	}
+	var used float64
+	if len(percent) > 0 {
+		used = percent[0]
+	}
+	return collect(used)
+}
+
+// collect assemble un Info à partir d'une mesure d'utilisation CPU déjà
+// disponible, sans aucun appel bloquant.
+func collect(cpuUsed float64) (*Info, error) {
 	info := &Info{Timestamp: time.Now()}
 
 	if err := info.collectHost(); err != nil {
 		return nil, err
 	}
-	if err := info.collectCPU(); err != nil {
-		return nil, err
-	}
+	info.collectCPU(cpuUsed)
 	if err := info.collectMemory(); err != nil {
 		return nil, err
 	}
@@ -76,6 +92,70 @@ func Collect() (*Info, error) {
 	}
 
 	return info, nil
+}
+
+// Collector fournit les métriques système sans bloquer les requêtes : une
+// goroutine échantillonne l'utilisation CPU en arrière-plan et la met en
+// cache, de sorte que Collect renvoie instantanément la dernière mesure.
+type Collector struct {
+	cpu cpuSampler
+}
+
+// NewCollector construit un collecteur prêt à l'emploi.
+func NewCollector() *Collector {
+	return &Collector{}
+}
+
+// Start lance l'échantillonnage CPU en arrière-plan jusqu'à l'annulation de
+// ctx. À appeler une seule fois avant de servir des requêtes.
+func (c *Collector) Start(ctx context.Context) {
+	go c.cpu.run(ctx)
+}
+
+// Collect renvoie les métriques courantes en réutilisant la dernière mesure
+// CPU mise en cache (aucun appel bloquant).
+func (c *Collector) Collect() (*Info, error) {
+	return collect(c.cpu.get())
+}
+
+// cpuSampler maintient la dernière utilisation CPU connue, protégée par un
+// mutex pour un accès concurrent sûr.
+type cpuSampler struct {
+	mu      sync.RWMutex
+	percent float64
+}
+
+func (s *cpuSampler) get() float64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.percent
+}
+
+func (s *cpuSampler) set(p float64) {
+	s.mu.Lock()
+	s.percent = p
+	s.mu.Unlock()
+}
+
+// run échantillonne le CPU à intervalle régulier jusqu'à l'annulation de ctx.
+// cpu.Percent(0, …) est non bloquant : il renvoie l'utilisation depuis l'appel
+// précédent, d'où l'appel initial qui sert de référence.
+func (s *cpuSampler) run(ctx context.Context) {
+	_, _ = cpu.Percent(0, false)
+
+	ticker := time.NewTicker(cpuSampleInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if p, err := cpu.Percent(0, false); err == nil && len(p) > 0 {
+				s.set(p[0])
+			}
+		}
+	}
 }
 
 func (i *Info) collectHost() error {
@@ -94,20 +174,13 @@ func (i *Info) collectHost() error {
 	return nil
 }
 
-func (i *Info) collectCPU() error {
-	percent, err := cpu.Percent(cpuSampleInterval, false)
-	if err != nil {
-		return err
-	}
+func (i *Info) collectCPU(usedPercent float64) {
+	i.CPU.UsedPercent = usedPercent
 	i.CPU.Cores = runtime.NumCPU()
-	if len(percent) > 0 {
-		i.CPU.UsedPercent = percent[0]
-	}
 	// Le modèle du CPU est optionnel : on ignore l'erreur sans échouer.
 	if infos, err := cpu.Info(); err == nil && len(infos) > 0 {
 		i.CPU.ModelName = infos[0].ModelName
 	}
-	return nil
 }
 
 func (i *Info) collectMemory() error {
