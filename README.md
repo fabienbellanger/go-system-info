@@ -4,9 +4,10 @@ Petit serveur web en Go qui expose les informations système de la machine (CPU,
 mémoire vive, disque, hôte) via une **API REST** et les affiche dans une
 **interface web moderne au thème sombre**.
 
-L'interface web (HTML, CSS et JS) est **embarquée dans le binaire** grâce à
-`//go:embed` : le binaire compilé est autonome, aucun fichier externe n'est
-nécessaire pour le déployer.
+L'interface web (HTML, CSS, JS, polices `.woff2` et favicon) est **embarquée
+dans le binaire** grâce à `//go:embed` : le binaire compilé est autonome et
+**fonctionne entièrement hors-ligne**, aucun appel réseau externe (Google Fonts
+inclus) ni fichier externe n'est nécessaire pour le déployer.
 
 Le code est organisé en packages : la collecte des métriques (`internal/sysinfo`)
 est séparée du serveur HTTP et du routage (`internal/server`).
@@ -249,8 +250,10 @@ systeminfo/
 │       └── server_test.go     # Tests du package server
 ├── public/                    # Interface web embarquée via //go:embed
 │   ├── index.html             # Structure de la page (thème sombre)
-│   ├── styles.css             # Styles
-│   └── app.js                 # Logique d'actualisation et appels API
+│   ├── styles.css             # Styles + polices @font-face locales
+│   ├── app.js                 # Logique d'actualisation et appels API
+│   ├── favicon.svg            # Favicon (écran stylisé)
+│   └── fonts/                 # Polices .woff2 embarquées (Inter, JetBrains Mono)
 ├── Makefile
 ├── go.mod
 ├── go.sum

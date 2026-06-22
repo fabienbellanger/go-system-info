@@ -20,8 +20,8 @@ Le projet est déjà propre et bien structuré (packages séparés, tests, Makef
 
 ## L'interface se prétend « autonome » mais ne l'est pas
 
-7. **Dépendance aux Google Fonts** — `index.html:7-12` charge Inter/JetBrains Mono depuis le réseau. Or l'argument de vente est « binaire autonome, aucun fichier externe ». Sur une machine isolée/offline, les polices tombent en fallback. **Embarquer les `.woff2`** dans `public/` (et les servir localement) rendrait l'app vraiment autonome.
-8. **Pas de favicon** → 404 systématique dans la console du navigateur.
+7. ~~**Dépendance aux Google Fonts**~~ — ✅ **Fait.** Les sous-ensembles latin/latin-ext d'Inter et JetBrains Mono (fontes variables, 4 fichiers `.woff2`) sont embarqués dans `public/fonts/` et déclarés via `@font-face` dans `styles.css`. Les `<link>` vers `fonts.googleapis.com`/`fonts.gstatic.com` ont été retirés d'`index.html` : l'app ne fait plus aucun appel réseau externe et fonctionne hors-ligne.
+8. ~~**Pas de favicon**~~ — ✅ **Fait.** Ajout d'un `public/favicon.svg` (écran stylisé au dégradé du thème) référencé via `<link rel="icon" type="image/svg+xml">`, supprimant le 404 systématique.
 
 ## Fonctionnalités produit
 
