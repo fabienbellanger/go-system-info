@@ -1,0 +1,9 @@
+# Hors contexte de build : on ne garde que le source Go et public/ (embarqué).
+.git
+.github
+dist
+cover.out
+*.md
+Dockerfile
+.dockerignore
+.golangci.yml

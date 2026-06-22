@@ -32,11 +32,11 @@ Le projet est déjà propre et bien structuré (packages séparés, tests, Makef
 
 ## Industrialisation
 
-13. **CI GitHub Actions** : `go test -race`, `go vet`, build multi-plateforme via le Makefile existant.
-14. **Dockerfile** multi-stage (build statique `CGO_ENABLED=0` déjà en place → image `scratch` minuscule).
-15. **`golangci-lint`** en complément du `go vet` actuel.
-16. **Benchmarks** : benchmarker les fonctions critiques (`Collect()`) pour évaluer les performances.
+13. ~~**CI GitHub Actions**~~ — ✅ **Fait.** Workflow `.github/workflows/ci.yml` (déclenché sur push `main` et pull requests, avec annulation des runs concurrents) en trois jobs : **test** (`go vet` + `go test -race`), **lint** (`golangci-lint`) et **build** (`make build-all`, cross-compilation 4 plateformes). Version de Go lue depuis `go.mod` (`go-version-file`), cache Go activé, `fetch-depth: 0` pour que `git describe` versionne correctement.
+14. ~~**Dockerfile**~~ — ✅ **Fait.** `Dockerfile` multi-stage : étape `golang:1.26-alpine` (téléchargement des deps en couche cachée puis build statique `CGO_ENABLED=0`, version injectable via `--build-arg VERSION`), image finale `FROM scratch` (binaire seul, l'interface web étant embarquée et aucun appel réseau externe). `EXPOSE 8222`, `ENTRYPOINT ["/app"]`, surcharge des flags possible. `.dockerignore` réduit le contexte de build. _(Build non validé localement : daemon Docker arrêté.)_
+15. ~~**`golangci-lint`**~~ — ✅ **Fait.** `.golangci.yml` (format v2) : jeu `standard` (errcheck, govet, ineffassign, staticcheck, unused) + `bodyclose`/`unconvert`, formateurs `gofmt`/`goimports`. `misspell` volontairement écarté (anglais uniquement → faux positifs sur les commentaires français). Code validé contre staticcheck/errcheck/ineffassign/unconvert/goimports (un `res.Body.Close()` non vérifié corrigé au passage).
+16. ~~**Benchmarks**~~ — ✅ **Fait.** `BenchmarkCollect` (assemblage d'un `Info` = coût réel d'une requête) et `BenchmarkHistorySnapshot` (copie de l'historique par événement SSE) dans `sysinfo_test.go`, plus la cible `make bench` (`go test -bench=. -benchmem -run=^$`). À noter : le bench révèle que `collect()` coûte ~34 ms/op, dominé par `cpu.Info()` (lecture du modèle CPU à chaque appel) — piste d'optimisation future (mise en cache du modèle).
 
 ## Tests
 
-17. Couvrir le **parsing des flags** et le **cas d'erreur de `handleSystem`** (injecter un collecteur via une interface plutôt que d'appeler `sysinfo.Collect()` en dur dans `server.go:51` — ça rend le handler testable sans dépendre de la vraie machine).
+17. ~~**Parsing des flags + cas d'erreur de `handleSystem`**~~ — ✅ **Fait.** `parseFlags` extrait de `main` (propre `FlagSet`, sortie injectable) et couvert par `main_test.go` (défauts, valeurs custom, port invalide, flag inconnu). Côté serveur, introduction de l'interface `systemCollector` (`Start`/`Collect`/`History`) portée par `Server.collector` : un `stubCollector` de test injecte une erreur et `TestHandleSystemError` vérifie la réponse `500`, sans dépendre de la vraie machine. Au passage, correction du Makefile dont les cibles `build-*` étaient cassées (espaces non échappés dans `BIN_NAME`).

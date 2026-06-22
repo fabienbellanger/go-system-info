@@ -1,0 +1,17 @@
+# Configuration golangci-lint (format v2).
+# Le jeu "standard" (errcheck, govet, ineffassign, staticcheck, unused) est
+# complété par quelques linters sûrs ; les formateurs vérifient la mise en forme.
+# Note : misspell n'est pas activé car il ne connaît que l'anglais et signalerait
+# les commentaires français en faux positifs.
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - bodyclose # corps de réponse HTTP non fermé
+    - unconvert # conversions de type redondantes
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

@@ -4,13 +4,29 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
+
+	"gosysteminfo/internal/sysinfo"
 )
+
+// stubCollector est un collecteur factice pour les tests : il renvoie des
+// valeurs prédéfinies sans interroger la machine.
+type stubCollector struct {
+	info *sysinfo.Info
+	err  error
+}
+
+func (s stubCollector) Start(context.Context) {}
+
+func (s stubCollector) Collect() (*sysinfo.Info, error) { return s.info, s.err }
+
+func (s stubCollector) History() []sysinfo.HistorySample { return nil }
 
 // newTestServer construit un serveur avec un contenu statique factice.
 func newTestServer(refresh time.Duration) *Server {
@@ -65,6 +81,22 @@ func TestHandleSystem(t *testing.T) {
 		if _, ok := body[key]; !ok {
 			t.Errorf("clé %q absente de la réponse", key)
 		}
+	}
+}
+
+func TestHandleSystemError(t *testing.T) {
+	// Collecteur en échec injecté : handleSystem doit répondre 500.
+	srv := &Server{
+		cfg:       Config{Static: fstest.MapFS{}},
+		collector: stubCollector{err: errors.New("collecte impossible")},
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/system", nil)
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("code = %d, attendu %d", rec.Code, http.StatusInternalServerError)
 	}
 }
 
@@ -153,7 +185,7 @@ func TestHandleStream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("requête /api/stream : %v", err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("code = %d, attendu %d", res.StatusCode, http.StatusOK)

@@ -1,5 +1,6 @@
-.PHONY: serve build-linux build-darwin-arm64 build-darwin-amd64 build-windows \
-        build-all test test-cover lint fix tidy update-deps clean
+.PHONY: serve watch build-linux build-darwin-arm64 build-darwin-amd64 build-windows \
+        build-all test test-cover bench lint fix tidy update-deps clean \
+        docker-build docker-run
 
 BIN_NAME := Go System Info
 SRC_DIR  := .
@@ -9,6 +10,7 @@ LDFLAGS  := -s -w -X main.version=$(VERSION)
 CGO      := CGO_ENABLED=0
 PORT     := 8222
 REFRESH  := 3s
+IMAGE    := go-system-info
 
 serve:
 	go run $(SRC_DIR) -p $(PORT) -r $(REFRESH)
@@ -18,27 +20,36 @@ watch:
 
 build-linux:
 	GOOS=linux GOARCH=amd64 $(CGO) go build -ldflags="$(LDFLAGS)" \
-		-o $(DIST_DIR)/$(BIN_NAME)-linux-amd64 $(SRC_DIR)
+		-o "$(DIST_DIR)/$(BIN_NAME)-linux-amd64" $(SRC_DIR)
 
 build-darwin-arm64:
 	GOOS=darwin GOARCH=arm64 $(CGO) go build -ldflags="$(LDFLAGS)" \
-		-o $(DIST_DIR)/$(BIN_NAME)-darwin-arm64 $(SRC_DIR)
+		-o "$(DIST_DIR)/$(BIN_NAME)-darwin-arm64" $(SRC_DIR)
 
 build-darwin-amd64:
 	GOOS=darwin GOARCH=amd64 $(CGO) go build -ldflags="$(LDFLAGS)" \
-		-o $(DIST_DIR)/$(BIN_NAME)-darwin-amd64 $(SRC_DIR)
+		-o "$(DIST_DIR)/$(BIN_NAME)-darwin-amd64" $(SRC_DIR)
 
 build-windows:
 	GOOS=windows GOARCH=amd64 $(CGO) go build -ldflags="$(LDFLAGS)" \
-		-o $(DIST_DIR)/$(BIN_NAME)-windows-amd64.exe $(SRC_DIR)
+		-o "$(DIST_DIR)/$(BIN_NAME)-windows-amd64.exe" $(SRC_DIR)
 
 build-all: build-linux build-darwin-arm64 build-darwin-amd64 build-windows
+
+docker-build:
+	docker build --build-arg VERSION=$(VERSION) -t $(IMAGE):$(VERSION) -t $(IMAGE):latest .
+
+docker-run: docker-build
+	docker run --rm -p $(PORT):$(PORT) $(IMAGE):latest -p $(PORT) -r $(REFRESH)
 
 test:
 	go test ./... -race
 
 test-cover:
 	go test -coverprofile=cover.out ./... && go tool cover -func=cover.out
+
+bench:
+	go test -bench=. -benchmem -run=^$$ ./...
 
 lint:
 	go fmt ./...

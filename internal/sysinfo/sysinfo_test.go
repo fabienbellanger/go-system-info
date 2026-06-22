@@ -62,6 +62,30 @@ func assertPercent(t *testing.T, name string, v float64) {
 	}
 }
 
+// BenchmarkCollect mesure l'assemblage d'un Info à partir de valeurs déjà
+// échantillonnées — c'est le coût réel d'une requête GET /api/system servie
+// par le Collector (lectures hôte/CPU/mémoire/disque, sans mesure CPU bloquante).
+func BenchmarkCollect(b *testing.B) {
+	for b.Loop() {
+		if _, err := collect(0, Net{}); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkHistorySnapshot mesure la copie de l'historique, effectuée à chaque
+// événement SSE et requête GET /api/history.
+func BenchmarkHistorySnapshot(b *testing.B) {
+	h := newHistory(historySize)
+	for i := range historySize {
+		h.add(HistorySample{CPU: float64(i), Mem: float64(i)})
+	}
+	b.ResetTimer()
+	for b.Loop() {
+		_ = h.snapshot()
+	}
+}
+
 func TestNetRate(t *testing.T) {
 	base := time.Unix(1000, 0)
 

@@ -1,8 +1,10 @@
 # go-system-info
 
 Petit serveur web en Go qui expose les informations système de la machine (CPU,
-mémoire vive, disque, hôte) via une **API REST** et les affiche dans une
-**interface web moderne au thème sombre**.
+charge, mémoire vive, disque, réseau, hôte) via une **API REST** et un **flux
+temps réel (Server-Sent Events)**, et les affiche dans une **interface web
+moderne au thème sombre** avec jauges colorées et courbes d'évolution
+(sparklines).
 
 L'interface web (HTML, CSS, JS, polices `.woff2` et favicon) est **embarquée
 dans le binaire** grâce à `//go:embed` : le binaire compilé est autonome et
@@ -14,15 +16,18 @@ est séparée du serveur HTTP et du routage (`internal/server`).
 
 ## Aperçu
 
-- 🖥️ Tableau de bord temps réel avec 4 cartes : Processeur, Mémoire vive, Disque, Hôte
+- 🖥️ Tableau de bord avec 5 cartes : Processeur, Mémoire vive, Disque, Réseau, Hôte
 - 📊 Jauges colorées selon le niveau d'utilisation (vert < 70 %, orange ≥ 70 %, rouge ≥ 90 %)
-- 🔄 Rafraîchissement automatique toutes les 3 secondes
-- 🟢 Indicateur de connexion à l'API
-- 📦 Tout est embarqué dans un seul binaire
-- ⚡ Échantillonnage CPU en arrière-plan : réponses API instantanées
+- 📈 Sparklines : courbes d'évolution CPU/RAM sur ~2 min (historique côté serveur)
+- 🌐 Métriques étendues : charge moyenne (load average) et débit réseau (↑/↓ + totaux)
+- 🔌 Push **temps réel** via Server-Sent Events (plus de polling)
+- 🟢 Indicateur de connexion à l'API (reconnexion automatique)
+- 📦 Tout est embarqué dans un seul binaire (interface, polices, favicon)
+- ⚡ Échantillonnage CPU/réseau en arrière-plan : réponses API instantanées
 - 🛡️ Serveur robuste : timeouts HTTP et arrêt gracieux (SIGINT/SIGTERM)
 - 📝 Logs structurés (`log/slog`) avec journalisation des requêtes
 - 🩺 Endpoints `/api/health` et `/api/version` pour la supervision
+- 🐳 Image Docker `scratch` minuscule + CI GitHub Actions (test, lint, build)
 
 ## Prérequis
 
@@ -62,8 +67,11 @@ une autre machine et l'exécuter sans dépendances supplémentaires.
 > make watch              # relance automatique au changement (watchexec)
 > make test               # tests avec détecteur de data races
 > make test-cover         # tests + rapport de couverture
+> make bench              # benchmarks des fonctions critiques
 > make lint               # go fmt + go vet
 > make build-all          # binaires Linux, macOS (arm64/amd64) et Windows dans dist/
+> make docker-build       # image Docker (scratch)
+> make docker-run         # build + lancement du conteneur
 > ```
 
 ### Options de ligne de commande
@@ -88,6 +96,36 @@ une autre machine et l'exécuter sans dépendances supplémentaires.
 # Les deux combinés
 go run . -p 3000 -r 10s
 ```
+
+## Docker
+
+Le `Dockerfile` est **multi-stage** : une étape `golang:1.26-alpine` compile un
+binaire statique (`CGO_ENABLED=0`), copié dans une image finale `FROM scratch`.
+Comme l'interface web est embarquée et qu'aucun appel réseau externe n'est requis,
+l'image ne contient **que le binaire** — quelques Mo.
+
+Le plus simple est de passer par le `Makefile` :
+
+```bash
+make docker-build   # construit l'image (version injectée depuis git describe)
+make docker-run     # construit puis lance le conteneur (port/intervalle du Makefile)
+```
+
+Ou directement avec Docker :
+
+```bash
+# Build (la version est injectable au build)
+docker build --build-arg VERSION=$(git describe --tags --always --dirty) -t go-system-info .
+
+# Lancement (port 8222 exposé par défaut)
+docker run --rm -p 8222:8222 go-system-info
+
+# Avec des options : port et intervalle personnalisés
+docker run --rm -p 9090:9090 go-system-info -p 9090 -r 5s
+```
+
+> Les arguments passés après le nom de l'image sont transmis au binaire
+> (`ENTRYPOINT`), exactement comme en ligne de commande.
 
 ## API REST
 
@@ -119,6 +157,11 @@ curl http://localhost:8222/api/system
     "cores": 8,
     "model_name": "Apple M3"
   },
+  "load": {
+    "load1": 2.59,
+    "load5": 3.39,
+    "load15": 3.2
+  },
   "memory": {
     "used_percent": 82.97,
     "used_gb": 7.12,
@@ -130,13 +173,57 @@ curl http://localhost:8222/api/system
     "used_gb": 164.35,
     "total_gb": 245.1,
     "path": "/"
+  },
+  "net": {
+    "recv_bytes_per_sec": 1436.0,
+    "sent_bytes_per_sec": 3315.0,
+    "recv_total_bytes": 594250003,
+    "sent_total_bytes": 96421144
   }
 }
 ```
 
-> Note : l'utilisation CPU est échantillonnée en continu par une goroutine
-> d'arrière-plan et mise en cache. Les requêtes `GET /api/system` sont donc
-> instantanées (aucun délai de mesure côté requête).
+- **`load`** : charge système moyenne sur 1, 5 et 15 minutes (load average). À
+  comparer au nombre de cœurs : en dessous il reste de la marge, au-dessus le
+  système est surchargé. Ce n'est **pas** un pourcentage CPU (peut dépasser le
+  nombre de cœurs et compte aussi l'attente d'I/O).
+- **`net`** : activité réseau agrégée sur toutes les interfaces — débit
+  instantané (octets/s) calculé en différenciant les compteurs cumulés, et
+  volumes totaux reçus/émis depuis le démarrage.
+
+> Note : l'utilisation CPU et le débit réseau sont échantillonnés en continu par
+> des goroutines d'arrière-plan et mis en cache. Les requêtes `GET /api/system`
+> sont donc instantanées (aucun délai de mesure côté requête).
+
+### `GET /api/stream` (temps réel, SSE)
+
+Flux **Server-Sent Events** : c'est le canal qu'utilise l'interface web à la
+place du polling. Le serveur émet un premier événement immédiatement, puis un
+nouveau à chaque intervalle de rafraîchissement (option `-r`). Chaque événement
+pousse un état combiné `{ "system": {…}, "history": [...] }`, ce qui remplace en
+une seule connexion les appels répétés à `/api/system` et `/api/history`.
+
+```bash
+curl -N http://localhost:8222/api/stream
+# data: {"system":{…},"history":[{"cpu":19.4,"mem":83.0}, …]}
+#
+# data: {"system":{…},"history":[ … ]}
+```
+
+> La connexion reste ouverte : le `WriteTimeout` du serveur est neutralisé pour
+> cette requête uniquement. En cas de coupure réseau, le navigateur
+> (`EventSource`) se reconnecte automatiquement.
+
+### `GET /api/history`
+
+Renvoie l'historique glissant des mesures CPU/mémoire (anneau circulaire conservé
+côté serveur, ~120 points à 1 point/s, soit environ 2 minutes), du plus ancien au
+plus récent. C'est la source des sparklines de l'interface.
+
+```bash
+curl http://localhost:8222/api/history
+# [{"cpu":19.4,"mem":83.0},{"cpu":21.1,"mem":82.7}, …]
+```
 
 ### `GET /api/health`
 
@@ -173,11 +260,11 @@ LDFLAGS  := -s -w -X main.version=$(VERSION)
 et capture sa sortie dans la variable `VERSION`. La commande utilisée est
 `git describe --tags --always --dirty` :
 
-| Flag        | Effet                                                                   |
-| ----------- | ----------------------------------------------------------------------- |
-| `--tags`    | Utilise le tag git le plus récent comme base (ex. `v1.2.0`)             |
-| `--always`  | Si aucun tag n'existe, retombe sur le hash court du commit (ex. `131ee4b`) |
-| `--dirty`   | Ajoute le suffixe `-dirty` si l'arbre de travail a des modifications non commitées |
+| Flag       | Effet                                                                              |
+| ---------- | ---------------------------------------------------------------------------------- |
+| `--tags`   | Utilise le tag git le plus récent comme base (ex. `v1.2.0`)                        |
+| `--always` | Si aucun tag n'existe, retombe sur le hash court du commit (ex. `131ee4b`)         |
+| `--dirty`  | Ajoute le suffixe `-dirty` si l'arbre de travail a des modifications non commitées |
 
 Exemples de sorties possibles :
 
@@ -241,19 +328,24 @@ go run .   # log au démarrage : version=dev
 ```
 systeminfo/
 ├── main.go                    # Point d'entrée : flags, //go:embed et démarrage du serveur
+├── main_test.go               # Tests du parsing des flags
 ├── internal/
 │   ├── sysinfo/
-│   │   ├── sysinfo.go         # Collecte des métriques (CPU, mémoire, disque, hôte)
-│   │   └── sysinfo_test.go    # Tests du package sysinfo
+│   │   ├── sysinfo.go         # Collecte des métriques (CPU, charge, mémoire, disque, réseau, hôte)
+│   │   └── sysinfo_test.go    # Tests + benchmarks du package sysinfo
 │   └── server/
-│       ├── server.go          # Serveur HTTP, routage et API REST
+│       ├── server.go          # Serveur HTTP, routage, API REST et flux SSE
 │       └── server_test.go     # Tests du package server
 ├── public/                    # Interface web embarquée via //go:embed
 │   ├── index.html             # Structure de la page (thème sombre)
 │   ├── styles.css             # Styles + polices @font-face locales
-│   ├── app.js                 # Logique d'actualisation et appels API
+│   ├── app.js                 # Sparklines, flux SSE et rendu de l'interface
 │   ├── favicon.svg            # Favicon (écran stylisé)
 │   └── fonts/                 # Polices .woff2 embarquées (Inter, JetBrains Mono)
+├── .github/workflows/ci.yml   # CI : tests, lint, build multi-plateforme
+├── Dockerfile                 # Build multi-stage → image scratch
+├── .dockerignore
+├── .golangci.yml              # Configuration golangci-lint
 ├── Makefile
 ├── go.mod
 ├── go.sum
@@ -262,18 +354,37 @@ systeminfo/
 
 ## Routes HTTP
 
-| Méthode | Chemin        | Description                                     |
-| ------- | ------------- | ----------------------------------------------- |
+| Méthode | Chemin         | Description                                     |
+| ------- | -------------- | ----------------------------------------------- |
 | `GET`   | `/`            | Interface web (HTML/CSS/JS embarqué)            |
 | `GET`   | `/api/system`  | Informations système au format JSON             |
+| `GET`   | `/api/stream`  | Flux temps réel (SSE) : système + historique    |
+| `GET`   | `/api/history` | Historique CPU/mémoire (sparklines)             |
 | `GET`   | `/api/config`  | Configuration de l'interface (intervalle en ms) |
 | `GET`   | `/api/health`  | Sonde de santé (`{"status":"ok"}`)              |
 | `GET`   | `/api/version` | Version du binaire injectée au build            |
 
+## Qualité, tests et CI
+
+- **Tests** : `make test` (avec détecteur de data races). Les handlers sont
+  testables sans dépendre de la machine grâce à une interface `systemCollector`
+  injectable, et le parsing des flags est isolé dans `parseFlags`.
+- **Benchmarks** : `make bench` mesure les fonctions critiques — l'assemblage
+  d'un `Info` (coût réel d'une requête) et la copie de l'historique (par
+  événement SSE).
+- **Lint** : `make lint` (go fmt + go vet) en local ; en CI, `golangci-lint`
+  avec la config `.golangci.yml` (jeu `standard` + `bodyclose`/`unconvert`,
+  formateurs `gofmt`/`goimports`).
+- **CI GitHub Actions** (`.github/workflows/ci.yml`) : à chaque push sur `main`
+  et chaque pull request — trois jobs **test** (`go vet` + `go test -race`),
+  **lint** (`golangci-lint`) et **build** (`make build-all`, cross-compilation
+  des 4 plateformes).
+
 ## Dépendances
 
 - [`github.com/shirou/gopsutil/v4`](https://github.com/shirou/gopsutil) —
-  collecte multiplateforme des métriques système (CPU, mémoire, disque, hôte).
+  collecte multiplateforme des métriques système (CPU, charge, mémoire, disque,
+  réseau, hôte).
 
 ## Personnalisation
 

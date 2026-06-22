@@ -34,10 +34,19 @@ type Config struct {
 	Version string        // Version du binaire (injectée au build), exposée via /api/version.
 }
 
+// systemCollector abstrait la source des métriques système. L'interface permet
+// d'injecter un collecteur factice dans les tests, sans dépendre de la machine
+// réelle (notamment pour couvrir le cas d'erreur de handleSystem).
+type systemCollector interface {
+	Start(ctx context.Context)
+	Collect() (*sysinfo.Info, error)
+	History() []sysinfo.HistorySample
+}
+
 // Server encapsule la configuration et le routage HTTP.
 type Server struct {
 	cfg       Config
-	collector *sysinfo.Collector
+	collector systemCollector
 }
 
 // New construit un serveur à partir de sa configuration.
