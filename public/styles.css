@@ -202,6 +202,9 @@ header {
 .card:nth-child(4) {
     animation-delay: 0.21s;
 }
+.card:nth-child(5) {
+    animation-delay: 0.28s;
+}
 
 @keyframes rise {
     from {
@@ -345,6 +348,32 @@ header {
     opacity: 0.7;
     margin-top: 0.2rem;
     cursor: help;
+}
+
+/* ---------- Sparkline (historique CPU/RAM) ---------- */
+.sparkline {
+    display: block;
+    width: 100%;
+    height: 32px;
+    margin-top: 1rem;
+    overflow: visible;
+    color: var(--accent); /* couleur ajustée dynamiquement selon le seuil */
+}
+
+.sparkline .spark-area {
+    fill: currentColor;
+    opacity: 0.13;
+}
+
+.sparkline .spark-line {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    vector-effect: non-scaling-stroke; /* trait d'épaisseur constante malgré l'étirement */
+    filter: drop-shadow(0 0 4px currentColor);
+    transition: stroke 0.5s;
 }
 
 /* ---------- Host card ---------- */

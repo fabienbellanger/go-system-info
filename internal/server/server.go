@@ -50,6 +50,8 @@ func New(cfg Config) *Server {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/system", s.handleSystem)
+	mux.HandleFunc("/api/history", s.handleHistory)
+	mux.HandleFunc("/api/stream", s.handleStream)
 	mux.HandleFunc("/api/config", s.handleConfig)
 	mux.HandleFunc("/api/health", s.handleHealth)
 	mux.HandleFunc("/api/version", s.handleVersion)
@@ -110,6 +112,70 @@ func (s *Server) handleSystem(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, info)
 }
 
+// handleHistory renvoie l'historique glissant des mesures CPU/mémoire,
+// du plus ancien au plus récent, au format JSON.
+func (s *Server) handleHistory(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, s.collector.History())
+}
+
+// streamState est la charge utile poussée à chaque événement SSE : l'état
+// instantané et l'historique glissant, regroupés pour éviter au client deux
+// requêtes par cycle.
+type streamState struct {
+	System  *sysinfo.Info           `json:"system"`
+	History []sysinfo.HistorySample `json:"history"`
+}
+
+// handleStream pousse l'état système en temps réel via Server-Sent Events,
+// remplaçant le polling côté client. Un premier événement est émis aussitôt,
+// puis un nouveau à chaque intervalle de rafraîchissement, jusqu'à la fermeture
+// de la connexion.
+func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Connection", "keep-alive")
+
+	rc := http.NewResponseController(w)
+	// Une connexion SSE est longue : on neutralise le WriteTimeout du serveur
+	// pour cette requête, sinon elle serait coupée au bout de writeTimeout.
+	if err := rc.SetWriteDeadline(time.Time{}); err != nil {
+		http.Error(w, "streaming non supporté", http.StatusInternalServerError)
+		return
+	}
+
+	ctx := r.Context()
+	ticker := time.NewTicker(s.cfg.Refresh)
+	defer ticker.Stop()
+
+	for {
+		if err := s.writeStreamEvent(w, rc); err != nil {
+			return // client déconnecté ou erreur d'écriture/collecte
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+// writeStreamEvent sérialise l'état courant et l'écrit comme un événement SSE,
+// puis vide le tampon pour une livraison immédiate.
+func (s *Server) writeStreamEvent(w http.ResponseWriter, rc *http.ResponseController) error {
+	info, err := s.collector.Collect()
+	if err != nil {
+		return err
+	}
+	data, err := json.Marshal(streamState{System: info, History: s.collector.History()})
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+		return err
+	}
+	return rc.Flush()
+}
+
 // handleConfig expose la configuration consommée par l'interface.
 func (s *Server) handleConfig(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, map[string]int64{
@@ -146,6 +212,13 @@ type statusRecorder struct {
 func (r *statusRecorder) WriteHeader(code int) {
 	r.status = code
 	r.ResponseWriter.WriteHeader(code)
+}
+
+// Unwrap expose le ResponseWriter sous-jacent pour que http.ResponseController
+// (Flush, SetWriteDeadline) fonctionne à travers ce wrapper — indispensable au
+// streaming SSE de /api/stream.
+func (r *statusRecorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
 }
 
 // logRequests journalise chaque requête (méthode, chemin, statut, durée)

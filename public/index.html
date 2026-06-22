@@ -37,6 +37,11 @@
                         </div>
                     </div>
                     <div class="detail" id="cpu-detail">—</div>
+                    <svg class="sparkline" id="cpu-spark" viewBox="0 0 100 28" preserveAspectRatio="none">
+                        <title>Évolution récente de l'utilisation du processeur</title>
+                        <polygon class="spark-area" id="cpu-spark-area" points="" />
+                        <polyline class="spark-line" id="cpu-spark-line" points="" />
+                    </svg>
                 </div>
 
                 <!-- RAM -->
@@ -56,6 +61,11 @@
                         </div>
                     </div>
                     <div class="detail" id="mem-detail">—</div>
+                    <svg class="sparkline" id="mem-spark" viewBox="0 0 100 28" preserveAspectRatio="none">
+                        <title>Évolution récente de l'utilisation de la mémoire vive</title>
+                        <polygon class="spark-area" id="mem-spark-area" points="" />
+                        <polyline class="spark-line" id="mem-spark-line" points="" />
+                    </svg>
                 </div>
 
                 <!-- Disque -->
@@ -77,6 +87,15 @@
                     <div class="detail" id="disk-detail">—</div>
                 </div>
 
+                <!-- Réseau -->
+                <div class="card">
+                    <div class="card-title"><span class="icon">🌐</span> Réseau</div>
+                    <ul class="info-list" id="net-list">
+                        <li><span class="key">⬇️ Réception</span><span class="val" id="net-recv">—</span></li>
+                        <li><span class="key">⬆️ Émission</span><span class="val" id="net-sent">—</span></li>
+                    </ul>
+                </div>
+
                 <!-- Hôte -->
                 <div class="card host-card">
                     <div class="card-title"><span class="icon">🏷️</span> Hôte</div>
@@ -87,7 +106,7 @@
             </div>
 
             <footer>
-                Actualisation automatique toutes les <span id="refresh-label">3 s</span> · API <code>/api/system</code>
+                Flux temps réel toutes les <span id="refresh-label">3 s</span> · SSE <code>/api/stream</code>
             </footer>
         </div>
 

@@ -1,9 +1,12 @@
 package server
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -104,6 +107,86 @@ func TestHandleVersion(t *testing.T) {
 	}
 	if body.Version != "test-1.2.3" {
 		t.Errorf("version = %q, attendu \"test-1.2.3\"", body.Version)
+	}
+}
+
+func TestHandleHistory(t *testing.T) {
+	srv := newTestServer(time.Second)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/history", nil)
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, attendu %d", rec.Code, http.StatusOK)
+	}
+	// Sans Start(), l'historique est vide mais doit rester un tableau JSON
+	// valide (et non null).
+	var body []struct {
+		CPU float64 `json:"cpu"`
+		Mem float64 `json:"mem"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("JSON invalide : %v", err)
+	}
+	if body == nil {
+		t.Error("réponse = null, attendu un tableau JSON")
+	}
+}
+
+func TestHandleStream(t *testing.T) {
+	srv := newTestServer(50 * time.Millisecond)
+
+	// Un vrai serveur est nécessaire : httptest.NewRecorder n'implémente pas
+	// le flush/streaming attendu par http.ResponseController.
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/stream", nil)
+	if err != nil {
+		t.Fatalf("création requête : %v", err)
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("requête /api/stream : %v", err)
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("code = %d, attendu %d", res.StatusCode, http.StatusOK)
+	}
+	if ct := res.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Errorf("Content-Type = %q, attendu \"text/event-stream\"", ct)
+	}
+
+	// Lit le premier événement SSE (émis immédiatement) et vérifie sa forme.
+	reader := bufio.NewReader(res.Body)
+	var payload string
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatalf("lecture du flux : %v", err)
+		}
+		if data, ok := strings.CutPrefix(line, "data: "); ok {
+			payload = strings.TrimSpace(data)
+			break
+		}
+	}
+
+	var state struct {
+		System  map[string]json.RawMessage `json:"system"`
+		History []map[string]float64       `json:"history"`
+	}
+	if err := json.Unmarshal([]byte(payload), &state); err != nil {
+		t.Fatalf("JSON d'événement invalide : %v", err)
+	}
+	for _, key := range []string{"timestamp", "host", "cpu", "memory", "disk"} {
+		if _, ok := state.System[key]; !ok {
+			t.Errorf("clé %q absente de l'état système diffusé", key)
+		}
 	}
 }
 

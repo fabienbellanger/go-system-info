@@ -25,9 +25,9 @@ Le projet est déjà propre et bien structuré (packages séparés, tests, Makef
 
 ## Fonctionnalités produit
 
-9. **Sparklines / historique** — garder un anneau circulaire des N dernières mesures côté serveur et tracer une courbe d'évolution CPU/RAM. Gros gain visuel.
-10. **SSE ou WebSocket** au lieu du polling `setInterval` (`app.js:97`) — push temps réel, plus léger.
-11. **Métriques supplémentaires** : load average, débit réseau, température/batterie (utile sur macOS), top processus. `gopsutil` expose déjà `load`, `net`, `process`.
+9. ~~**Sparklines / historique**~~ — ✅ **Fait.** Le `Collector` enregistre un anneau circulaire thread-safe (`history`, 120 points à 1 point/s, soit ≈ 2 min) via une goroutine `recordHistory` lancée par `Start`. Chaque point (`HistorySample{CPU, Mem}`) combine l'utilisation CPU mise en cache et la mémoire relevée à l'instant. L'endpoint `GET /api/history` (`handleHistory`) renvoie la série ordonnée. Côté interface, `renderSparkline` (`app.js`) trace une courbe d'évolution (aire + ligne SVG, couleur suivant le seuil) sous les jauges CPU et RAM, rafraîchie à chaque cycle via `updateHistory`.
+10. ~~**SSE ou WebSocket** au lieu du polling `setInterval`~~ — ✅ **Fait.** Choix des **Server-Sent Events** (pas de dépendance, push serveur→client, reconnexion native). Endpoint `GET /api/stream` (`handleStream`) qui émet un premier événement aussitôt puis un à chaque intervalle (`s.cfg.Refresh`), poussant un état combiné `streamState{System, History}` — une seule connexion remplace les deux fetchs `/api/system` + `/api/history` par cycle. `http.ResponseController.SetWriteDeadline(zéro)` neutralise le `WriteTimeout` du serveur pour cette connexion longue (sinon coupée à 15 s), et `statusRecorder.Unwrap()` permet à `Flush`/`SetWriteDeadline` de traverser le middleware de logging. Côté interface, `app.js` remplace `setInterval` par un `EventSource` (`connect`) dont chaque message alimente `applyState` (jauges, hôte, sparklines). Les endpoints REST `/api/system` et `/api/history` restent disponibles.
+11. ~~**Métriques supplémentaires**~~ — ✅ **Fait (load average + débit réseau).** `load.Avg()` alimente `Info.Load` (1/5/15 min) via `collectLoad`, lu de façon synchrone et non bloquante. Le débit réseau (`Info.Net`, octets/s ↑/↓) est calculé par un `netSampler` en arrière-plan qui différencie les compteurs cumulés de `net.IOCounters` entre deux relevés espacés (`netSampleInterval`), avec garde contre la réinitialisation des compteurs (`perSec`) ; logique de taux isolée dans `netRate` (testée). Côté interface : nouvelle carte « Réseau » (⬇️/⬆️, `formatRate` en unités décimales) et ligne « Charge » dans la carte Hôte (`formatLoad`). **Écartés** : top processus (échantillonnage CPU par process, trop coûteux à chaque cycle) et température/batterie (`SensorsTemperatures` peu fiable sur macOS sans cgo, batterie non exposée par gopsutil).
 12. **Partition disque configurable** — la note « espace purgeable non inclus » (`app.js:60`) est codée en dur pour macOS. Un flag `-d /chemin` (le `Collect()` accepte déjà un path en interne) et le support de plusieurs montages généraliseraient l'outil.
 
 ## Industrialisation
@@ -35,7 +35,8 @@ Le projet est déjà propre et bien structuré (packages séparés, tests, Makef
 13. **CI GitHub Actions** : `go test -race`, `go vet`, build multi-plateforme via le Makefile existant.
 14. **Dockerfile** multi-stage (build statique `CGO_ENABLED=0` déjà en place → image `scratch` minuscule).
 15. **`golangci-lint`** en complément du `go vet` actuel.
+16. **Benchmarks** : benchmarker les fonctions critiques (`Collect()`) pour évaluer les performances.
 
 ## Tests
 
-16. Couvrir le **parsing des flags** et le **cas d'erreur de `handleSystem`** (injecter un collecteur via une interface plutôt que d'appeler `sysinfo.Collect()` en dur dans `server.go:51` — ça rend le handler testable sans dépendre de la vraie machine).
+17. Couvrir le **parsing des flags** et le **cas d'erreur de `handleSystem`** (injecter un collecteur via une interface plutôt que d'appeler `sysinfo.Collect()` en dur dans `server.go:51` — ça rend le handler testable sans dépendre de la vraie machine).
