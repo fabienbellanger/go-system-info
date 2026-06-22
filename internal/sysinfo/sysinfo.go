@@ -66,10 +66,13 @@ type Load struct {
 	Fifteen float64 `json:"load15"`
 }
 
-// Net décrit le débit réseau instantané, agrégé sur toutes les interfaces.
+// Net décrit l'activité réseau agrégée sur toutes les interfaces : débit
+// instantané (octets/s) et volumes cumulés depuis le démarrage.
 type Net struct {
 	RecvBytesPerSec float64 `json:"recv_bytes_per_sec"`
 	SentBytesPerSec float64 `json:"sent_bytes_per_sec"`
+	RecvTotalBytes  uint64  `json:"recv_total_bytes"`
+	SentTotalBytes  uint64  `json:"sent_total_bytes"`
 }
 
 // Memory décrit l'utilisation de la mémoire vive.
@@ -327,16 +330,17 @@ func readNetTotals() (netTotals, bool) {
 	return netTotals{recv: counters[0].BytesRecv, sent: counters[0].BytesSent, at: time.Now()}, true
 }
 
-// netRate calcule le débit (octets/s) entre deux relevés.
+// netRate calcule le débit (octets/s) entre deux relevés et reporte les
+// volumes cumulés du relevé courant.
 func netRate(prev, cur netTotals) Net {
+	n := Net{RecvTotalBytes: cur.recv, SentTotalBytes: cur.sent}
 	elapsed := cur.at.Sub(prev.at).Seconds()
 	if elapsed <= 0 {
-		return Net{}
+		return n
 	}
-	return Net{
-		RecvBytesPerSec: perSec(prev.recv, cur.recv, elapsed),
-		SentBytesPerSec: perSec(prev.sent, cur.sent, elapsed),
-	}
+	n.RecvBytesPerSec = perSec(prev.recv, cur.recv, elapsed)
+	n.SentBytesPerSec = perSec(prev.sent, cur.sent, elapsed)
+	return n
 }
 
 // perSec renvoie le débit pour un compteur cumulé, en se prémunissant d'une

@@ -21,7 +21,7 @@
 
             <div class="grid">
                 <!-- CPU -->
-                <div class="card">
+                <div class="card card-gauge">
                     <div class="card-title"><span class="icon">⚙️</span> Processeur</div>
                     <div class="gauge-wrap">
                         <div class="gauge">
@@ -45,7 +45,7 @@
                 </div>
 
                 <!-- RAM -->
-                <div class="card">
+                <div class="card card-gauge">
                     <div class="card-title"><span class="icon">🧠</span> Mémoire vive</div>
                     <div class="gauge-wrap">
                         <div class="gauge">
@@ -69,7 +69,7 @@
                 </div>
 
                 <!-- Disque -->
-                <div class="card">
+                <div class="card card-gauge">
                     <div class="card-title"><span class="icon">🗄️</span> Disque</div>
                     <div class="gauge-wrap">
                         <div class="gauge">
@@ -88,16 +88,18 @@
                 </div>
 
                 <!-- Réseau -->
-                <div class="card">
+                <div class="card card-wide">
                     <div class="card-title"><span class="icon">🌐</span> Réseau</div>
                     <ul class="info-list" id="net-list">
                         <li><span class="key">⬇️ Réception</span><span class="val" id="net-recv">—</span></li>
                         <li><span class="key">⬆️ Émission</span><span class="val" id="net-sent">—</span></li>
+                        <li><span class="key">📥 Total reçu</span><span class="val" id="net-recv-total">—</span></li>
+                        <li><span class="key">📤 Total émis</span><span class="val" id="net-sent-total">—</span></li>
                     </ul>
                 </div>
 
                 <!-- Hôte -->
-                <div class="card host-card">
+                <div class="card card-wide host-card">
                     <div class="card-title"><span class="icon">🏷️</span> Hôte</div>
                     <ul class="info-list" id="host-list">
                         <li><span class="key">Chargement…</span></li>

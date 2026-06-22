@@ -75,13 +75,21 @@ func TestNetRate(t *testing.T) {
 		if got.SentBytesPerSec != 500 { // (1500-500)/2
 			t.Errorf("SentBytesPerSec = %v, attendu 500", got.SentBytesPerSec)
 		}
+		if got.RecvTotalBytes != 3000 || got.SentTotalBytes != 1500 {
+			t.Errorf("totaux = %d/%d, attendus 3000/1500", got.RecvTotalBytes, got.SentTotalBytes)
+		}
 	})
 
 	t.Run("durée nulle", func(t *testing.T) {
-		prev := netTotals{recv: 1000, at: base}
-		cur := netTotals{recv: 3000, at: base}
-		if got := netRate(prev, cur); got != (Net{}) {
-			t.Errorf("attendu Net nul pour une durée nulle, obtenu %+v", got)
+		prev := netTotals{recv: 1000, sent: 500, at: base}
+		cur := netTotals{recv: 3000, sent: 1500, at: base}
+		got := netRate(prev, cur)
+		if got.RecvBytesPerSec != 0 || got.SentBytesPerSec != 0 {
+			t.Errorf("attendu débit nul pour une durée nulle, obtenu %+v", got)
+		}
+		// Les totaux restent reportés même sans intervalle exploitable.
+		if got.RecvTotalBytes != 3000 || got.SentTotalBytes != 1500 {
+			t.Errorf("totaux = %d/%d, attendus 3000/1500", got.RecvTotalBytes, got.SentTotalBytes)
 		}
 	})
 

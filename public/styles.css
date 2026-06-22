@@ -173,8 +173,53 @@ header {
 /* ---------- Grid & Cards ---------- */
 .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    grid-template-columns: repeat(6, 1fr);
     gap: 1.4rem;
+}
+
+/* Jauges (CPU, RAM, Disque) : trois cartes sur une rangée. Cartes larges
+   (Réseau, Hôte) : deux par rangée. Toutes s'étirent à hauteur égale ; la
+   liste des cartes larges se répartit verticalement (space-between) pour que
+   la moins remplie (Réseau) comble sa hauteur sans paraître vide. */
+.card-gauge {
+    grid-column: span 2;
+}
+
+.card-wide {
+    grid-column: span 3;
+    display: flex;
+    flex-direction: column;
+}
+
+.card-wide .info-list {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+
+@media (max-width: 900px) {
+    .grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    .card-gauge,
+    .card-wide {
+        grid-column: span 1;
+    }
+    .host-card {
+        grid-column: span 2; /* l'hôte occupe la dernière rangée en entier */
+    }
+}
+
+@media (max-width: 560px) {
+    .grid {
+        grid-template-columns: 1fr;
+    }
+    .card-gauge,
+    .card-wide,
+    .host-card {
+        grid-column: span 1;
+    }
 }
 
 .card {
@@ -377,10 +422,6 @@ header {
 }
 
 /* ---------- Host card ---------- */
-.host-card {
-    grid-column: span 1;
-}
-
 .info-list {
     list-style: none;
 }
@@ -411,6 +452,18 @@ header {
     font-family: var(--mono);
     font-weight: 500;
     word-break: break-word;
+}
+
+/* Repère secondaire dans une valeur (ex. « · 8 cœurs » après la charge). */
+.info-list .val .ref {
+    color: var(--text-faint);
+    font-size: 0.82em;
+    margin-left: 0.4rem;
+}
+
+/* Lignes porteuses d'une infobulle explicative (ex. Charge). */
+.info-list li[title] {
+    cursor: help;
 }
 
 footer {

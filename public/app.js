@@ -44,19 +44,24 @@ function renderSparkline(prefix, values) {
     svg.style.color = colorFor(values[values.length - 1]);
 }
 
-// formatRate met en forme un débit (octets/s) en unités décimales lisibles,
+// formatBytes met en forme un volume d'octets en unités décimales lisibles,
 // cohérentes avec l'affichage des Go (base 1000) du reste de l'interface.
-function formatRate(bytesPerSec) {
-    const units = ["o/s", "Ko/s", "Mo/s", "Go/s"];
-    let v = Math.max(bytesPerSec, 0);
+function formatBytes(bytes) {
+    const units = ["o", "Ko", "Mo", "Go", "To"];
+    let v = Math.max(bytes, 0);
     let i = 0;
     while (v >= 1000 && i < units.length - 1) {
         v /= 1000;
         i++;
     }
-    // Une décimale pour les unités >= Ko/s tant que la valeur reste petite.
+    // Une décimale pour les unités >= Ko tant que la valeur reste petite.
     const digits = i > 0 && v < 100 ? 1 : 0;
     return `${v.toFixed(digits)} ${units[i]}`;
+}
+
+// formatRate met en forme un débit (octets/s).
+function formatRate(bytesPerSec) {
+    return `${formatBytes(bytesPerSec)}/s`;
 }
 
 // formatLoad met en forme la charge moyenne 1/5/15 min.
@@ -106,13 +111,25 @@ function applyState(state) {
     const net = data.net || {};
     document.getElementById("net-recv").textContent = formatRate(net.recv_bytes_per_sec || 0);
     document.getElementById("net-sent").textContent = formatRate(net.sent_bytes_per_sec || 0);
+    document.getElementById("net-recv-total").textContent = formatBytes(net.recv_total_bytes || 0);
+    document.getElementById("net-sent-total").textContent = formatBytes(net.sent_total_bytes || 0);
 
     const host = data.host;
+    const cores = data.cpu.cores;
+    // Charge : on affiche le triplet 1/5/15 min, suivi d'un repère « · N cœurs »
+    // pour situer la valeur, et une infobulle explique la lecture.
+    const loadText = data.load
+        ? `${formatLoad(data.load)}<span class="ref">· ${cores} cœurs</span>`
+        : "—";
+    const loadTitle =
+        `Charge système moyenne (load average) sur 1, 5 et 15 min : nombre moyen de processus ` +
+        `actifs ou en attente du CPU. À comparer aux ${cores} cœurs — en dessous il reste de la ` +
+        `marge, au-dessus le système est surchargé. Ce n'est pas un pourcentage CPU.`;
     document.getElementById("host-list").innerHTML = `
       <li><span class="key">🏠 Nom</span><span class="val">${host.hostname || "—"}</span></li>
       <li><span class="key">🖥️ Système</span><span class="val">${host.platform || host.os || "—"}</span></li>
       <li><span class="key">🏗️ Architecture</span><span class="val">${host.kernel_arch || "—"}</span></li>
-      <li><span class="key">📈 Charge</span><span class="val">${formatLoad(data.load)}</span></li>
+      <li title="${loadTitle}"><span class="key">📈 Charge</span><span class="val">${loadText}</span></li>
       <li><span class="key">⏱️ Uptime</span><span class="val">${formatUptime(host.uptime_seconds)}</span></li>
       <li><span class="key">🐹 Go</span><span class="val">${host.go_version || "—"}</span></li>
     `;
