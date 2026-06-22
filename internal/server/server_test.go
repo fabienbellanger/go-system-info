@@ -14,7 +14,7 @@ func newTestServer(refresh time.Duration) *Server {
 	static := fstest.MapFS{
 		"index.html": &fstest.MapFile{Data: []byte("<h1>OK</h1>")},
 	}
-	return New(Config{Port: 0, Refresh: refresh, Static: static})
+	return New(Config{Port: 0, Refresh: refresh, Static: static, Version: "test-1.2.3"})
 }
 
 func TestHandleConfig(t *testing.T) {
@@ -62,6 +62,48 @@ func TestHandleSystem(t *testing.T) {
 		if _, ok := body[key]; !ok {
 			t.Errorf("clé %q absente de la réponse", key)
 		}
+	}
+}
+
+func TestHandleHealth(t *testing.T) {
+	srv := newTestServer(time.Second)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, attendu %d", rec.Code, http.StatusOK)
+	}
+	var body struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("JSON invalide : %v", err)
+	}
+	if body.Status != "ok" {
+		t.Errorf("status = %q, attendu \"ok\"", body.Status)
+	}
+}
+
+func TestHandleVersion(t *testing.T) {
+	srv := newTestServer(time.Second)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/version", nil)
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, attendu %d", rec.Code, http.StatusOK)
+	}
+	var body struct {
+		Version string `json:"version"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("JSON invalide : %v", err)
+	}
+	if body.Version != "test-1.2.3" {
+		t.Errorf("version = %q, attendu \"test-1.2.3\"", body.Version)
 	}
 }
 

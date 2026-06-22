@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -31,6 +31,7 @@ type Config struct {
 	Port    int           // Port d'écoute HTTP.
 	Refresh time.Duration // Intervalle de rafraîchissement exposé à l'interface.
 	Static  fs.FS         // Système de fichiers du contenu statique (interface web).
+	Version string        // Version du binaire (injectée au build), exposée via /api/version.
 }
 
 // Server encapsule la configuration et le routage HTTP.
@@ -44,13 +45,16 @@ func New(cfg Config) *Server {
 	return &Server{cfg: cfg, collector: sysinfo.NewCollector()}
 }
 
-// Handler assemble les routes et renvoie le gestionnaire HTTP racine.
+// Handler assemble les routes et renvoie le gestionnaire HTTP racine,
+// enveloppé par le middleware de journalisation des requêtes.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/system", s.handleSystem)
 	mux.HandleFunc("/api/config", s.handleConfig)
+	mux.HandleFunc("/api/health", s.handleHealth)
+	mux.HandleFunc("/api/version", s.handleVersion)
 	mux.Handle("/", http.FileServer(http.FS(s.cfg.Static)))
-	return mux
+	return logRequests(mux)
 }
 
 // ListenAndServe démarre le serveur HTTP (appel bloquant). Il s'arrête
@@ -75,7 +79,11 @@ func (s *Server) ListenAndServe() error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		log.Printf("Server started on http://localhost%s (refresh: %s)...", addr, s.cfg.Refresh)
+		slog.Info("serveur démarré",
+			"url", fmt.Sprintf("http://localhost%s", addr),
+			"refresh", s.cfg.Refresh,
+			"version", s.cfg.Version,
+		)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}
@@ -85,7 +93,7 @@ func (s *Server) ListenAndServe() error {
 	case err := <-errCh:
 		return err
 	case <-ctx.Done():
-		log.Println("Arrêt en cours...")
+		slog.Info("arrêt en cours...")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)
@@ -109,11 +117,50 @@ func (s *Server) handleConfig(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
+// handleHealth répond aux sondes de santé des orchestrateurs.
+func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+// handleVersion expose la version du binaire injectée au build.
+func (s *Server) handleVersion(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, map[string]string{"version": s.cfg.Version})
+}
+
 // writeJSON sérialise v en JSON avec les en-têtes adéquats.
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	if err := json.NewEncoder(w).Encode(v); err != nil {
-		log.Println("Erreur d'encodage JSON :", err)
+		slog.Error("erreur d'encodage JSON", "err", err)
 	}
+}
+
+// statusRecorder enveloppe http.ResponseWriter pour mémoriser le code de
+// statut HTTP écrit par le handler, afin de pouvoir le journaliser.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+// logRequests journalise chaque requête (méthode, chemin, statut, durée)
+// au format structuré via slog.
+func logRequests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		slog.Info("requête HTTP",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", rec.status,
+			"duration", time.Since(start),
+			"remote", r.RemoteAddr,
+		)
+	})
 }

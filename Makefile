@@ -4,9 +4,10 @@
 BIN_NAME := Go System Info
 SRC_DIR  := .
 DIST_DIR := dist
-LDFLAGS  := -s -w
+VERSION  := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS  := -s -w -X main.version=$(VERSION)
 CGO      := CGO_ENABLED=0
-PORT     := 8080
+PORT     := 8222
 REFRESH  := 3s
 
 serve:

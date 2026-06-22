@@ -12,9 +12,11 @@ Le projet est déjà propre et bien structuré (packages séparés, tests, Makef
 
 ## Observabilité
 
-4. **Endpoint `/healthz`** (ou `/api/health`) pour les health checks / orchestrateurs.
-5. **Logging des requêtes** via un middleware simple autour du `mux`, et passage à `log/slog` pour du log structuré.
-6. **Injection de la version au build** — `-ldflags "-X main.version=..."` dans le Makefile, exposé via un endpoint `/api/version` ou un log au démarrage.
+4. ~~**Endpoint `/api/health`**~~ — ✅ **Fait.** Route `GET /api/health` renvoyant `{"status":"ok"}` (`handleHealth`) pour les sondes des orchestrateurs.
+
+5. ~~**Logging des requêtes**~~ — ✅ **Fait.** Middleware `logRequests` enveloppant le `mux` : journalise méthode, chemin, statut (capturé via `statusRecorder`), durée et adresse distante. Tout le serveur (`main.go` inclus) est passé à `log/slog` pour des logs structurés.
+
+6. ~~**Injection de la version au build**~~ — ✅ **Fait.** Variable `main.version` (défaut `"dev"`) injectée via `-ldflags "-X main.version=$(VERSION)"` dans le Makefile, où `VERSION` provient de `git describe --tags --always --dirty`. Exposée par l'endpoint `GET /api/version` (`Config.Version`) et journalisée au démarrage.
 
 ## L'interface se prétend « autonome » mais ne l'est pas
 
