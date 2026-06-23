@@ -12,6 +12,14 @@ import (
 	"gosysteminfo/internal/server"
 )
 
+const (
+	// defaultPort est le port par défaut sur lequel le serveur écoute.
+	defaultPort = 8222
+
+	// defaultRefreshInterval est l'intervalle de rafraîchissement par défaut.
+	defaultRefreshInterval = 3 * time.Second
+)
+
 // publicFS embarque l'interface web dans le binaire.
 //
 //go:embed public
@@ -51,8 +59,8 @@ func parseFlags(name string, args []string, out io.Writer) (server.Config, error
 	flags.SetOutput(out)
 
 	var cfg server.Config
-	flags.IntVar(&cfg.Port, "p", 8222, "Port d'écoute du serveur HTTP")
-	flags.DurationVar(&cfg.Refresh, "r", 3*time.Second,
+	flags.IntVar(&cfg.Port, "p", defaultPort, "Port d'écoute du serveur HTTP")
+	flags.DurationVar(&cfg.Refresh, "r", defaultRefreshInterval,
 		"Intervalle de rafraîchissement de l'interface (ex. 5s, 30s, 1m)")
 
 	if err := flags.Parse(args); err != nil {

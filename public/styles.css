@@ -42,7 +42,7 @@
     --bg: #0a0c10;
     --bg-grad-1: #10131c;
     --bg-grad-2: #0a0c10;
-    --card: rgba(22, 27, 38, 0.55);
+    --card: rgba(22, 27, 38, 0.66);
     --card-border: rgba(255, 255, 255, 0.07);
     --card-border-hover: rgba(255, 255, 255, 0.15);
     --text: #eef2f8;
@@ -165,7 +165,16 @@ header {
     border-radius: 50%;
     border: 1px solid var(--green);
     transform-origin: center center;
-    animation: ripple 1.8s ease-out infinite;
+    opacity: 0; /* au repos : aucune animation continue, le navigateur peut rester inactif */
+}
+
+/* Onde émise ponctuellement à chaque mise à jour reçue (classe posée par
+   app.js) : un repère de vie qui n'entretient pas un rendu permanent — au
+   contraire d'une animation « infinite », qui forçait le navigateur à
+   recomposer en boucle les cartes floutées (backdrop-filter) et faisait grimper
+   le CPU. */
+.dot.pulse::after {
+    animation: ripple 1s ease-out;
 }
 
 .dot.error {
@@ -197,6 +206,20 @@ header {
     }
     50% {
         opacity: 0.3;
+    }
+}
+
+/* Respecte la préférence système « réduire les animations » : on supprime les
+   effets décoratifs et continus pour limiter encore le travail de rendu. */
+@media (prefers-reduced-motion: reduce) {
+    .dot.pulse::after,
+    .dot.error,
+    .card {
+        animation: none;
+    }
+    .gauge .progress,
+    .sparkline .spark-line {
+        transition: none;
     }
 }
 
@@ -258,8 +281,11 @@ header {
     border: 1px solid var(--card-border);
     border-radius: 18px;
     padding: 1.6rem;
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
+    /* Pas de backdrop-filter : le fond derrière les cartes est un dégradé déjà
+       lisse, que le flou ne modifiait quasiment pas — mais backdrop-filter est
+       re-rasterisé à chaque frame d'animation (onde, transitions de jauges), ce
+       qui était le principal poste de consommation CPU/GPU. L'opacité de --card
+       a été légèrement relevée pour conserver l'aspect « panneau ». */
     overflow: hidden;
     transition:
         border-color 0.3s,
@@ -340,6 +366,13 @@ header {
     position: relative;
     width: 150px;
     height: 150px;
+    border-radius: 50%;
+    /* Halo coloré porté par le conteneur HTML via box-shadow (peu coûteux),
+       plutôt que par un drop-shadow SVG sur l'arc — ce dernier était recalculé à
+       chaque frame de la transition stroke-dashoffset. La couleur (--gauge-glow)
+       est posée par app.js selon le seuil ; transparente tant qu'aucune mesure. */
+    box-shadow: 0 0 14px -2px color-mix(in srgb, var(--gauge-glow, transparent) 55%, transparent);
+    transition: box-shadow 0.5s ease;
 }
 
 .gauge svg {
@@ -361,10 +394,12 @@ header {
     stroke-linecap: round;
     stroke-dasharray: 377;
     stroke-dashoffset: 377;
+    /* Transition courte : l'animation de chaque mise à jour (et les repaints
+       qu'elle entraîne) dure peu, ce qui élargit la fenêtre d'inactivité entre
+       deux cycles. Pas de drop-shadow ici : le halo est porté par .gauge. */
     transition:
-        stroke-dashoffset 0.9s cubic-bezier(0.22, 1, 0.36, 1),
+        stroke-dashoffset 0.6s cubic-bezier(0.22, 1, 0.36, 1),
         stroke 0.5s;
-    filter: drop-shadow(0 0 6px currentColor);
 }
 
 .gauge-center {

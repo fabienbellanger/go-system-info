@@ -15,9 +15,12 @@ function updateGauge(prefix, pct, detail, sub) {
     const color = colorFor(pct);
 
     value.textContent = pct.toFixed(0);
-    arc.style.color = color; // alimente le drop-shadow
     arc.style.stroke = color;
     arc.style.strokeDashoffset = CIRCUMFERENCE * (1 - Math.min(pct, 100) / 100);
+    // Halo coloré porté par le conteneur (box-shadow via --gauge-glow), au lieu
+    // d'un drop-shadow SVG recalculé à chaque frame de la transition de l'arc.
+    const gauge = arc.closest(".gauge");
+    if (gauge) gauge.style.setProperty("--gauge-glow", color);
     det.innerHTML = detail + (sub ? `<span class="sub">${sub}</span>` : "");
 }
 
@@ -130,7 +133,9 @@ function goOffline(title) {
     if (!offlineSince) offlineSince = Date.now();
     document.body.classList.add("offline");
     document.getElementById("status").classList.add("offline");
-    document.getElementById("status-dot").classList.add("error");
+    const dot = document.getElementById("status-dot");
+    dot.classList.remove("pulse"); // coupe toute onde en cours avant le clignotement rouge
+    dot.classList.add("error");
     document.getElementById("status").title = title;
     if (!offlineTicker) {
         renderOfflineLabel();
@@ -142,6 +147,16 @@ function goOffline(title) {
 function renderOfflineLabel() {
     const secs = Math.max(0, Math.round((Date.now() - offlineSince) / 1000));
     document.getElementById("status-text").textContent = secs < 3 ? "Hors ligne" : `Hors ligne · ${secs} s`;
+}
+
+// pulseStatus émet une onde unique sur le point de statut à chaque mise à jour
+// reçue : un repère de vie ponctuel, sans animation continue (qui maintiendrait
+// le navigateur en rendu permanent et ferait grimper le CPU au repos).
+function pulseStatus() {
+    const dot = document.getElementById("status-dot");
+    dot.classList.remove("pulse");
+    void dot.offsetWidth; // force un reflow pour pouvoir relancer l'animation
+    dot.classList.add("pulse");
 }
 
 // applyState met à jour l'interface à partir d'un état poussé par le flux SSE
@@ -205,6 +220,7 @@ function applyState(state) {
 
     const time = new Date(data.timestamp).toLocaleTimeString("fr-FR");
     goOnline(`À jour · dernière mesure à ${time}`);
+    pulseStatus();
 }
 
 // connect ouvre le flux SSE et met à jour l'interface à chaque événement.
