@@ -128,6 +128,25 @@ header {
     font-size: 0.82rem;
     color: var(--text-dim);
     padding: 0.5rem 0.85rem;
+    border: 1px solid transparent; /* réservé pour l'état hors ligne, évite tout décalage */
+    border-radius: 999px;
+    transition:
+        background 0.3s,
+        border-color 0.3s,
+        color 0.3s;
+}
+
+/* Badge hors ligne : pastille rouge tintée + libellé « Hors ligne · N s ». */
+.status.offline {
+    background: rgba(255, 107, 107, 0.09);
+    border-color: rgba(255, 107, 107, 0.25);
+    color: var(--red);
+}
+
+.status-text {
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    font-variant-numeric: tabular-nums;
 }
 
 .dot {
@@ -151,6 +170,7 @@ header {
 
 .dot.error {
     background: var(--red);
+    animation: blink 1.2s ease-in-out infinite; /* signale les tentatives de reconnexion */
 }
 
 .dot.error::after {
@@ -167,6 +187,16 @@ header {
     100% {
         transform: scale(3);
         opacity: 0;
+    }
+}
+
+@keyframes blink {
+    0%,
+    100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.3;
     }
 }
 
@@ -464,6 +494,27 @@ header {
 /* Lignes porteuses d'une infobulle explicative (ex. Charge). */
 .info-list li[title] {
     cursor: help;
+}
+
+/* ---------- État hors ligne (flux rompu : données figées) ---------- */
+/* Les mesures ne sont plus rafraîchies : on désature et on estompe les jauges,
+   les sparklines et les valeurs pour signaler sans ambiguïté qu'elles sont
+   figées, tout en les laissant lisibles. Le retour en ligne est progressif. */
+.gauge,
+.detail,
+.sparkline,
+.info-list .val {
+    transition:
+        filter 0.5s ease,
+        opacity 0.5s ease;
+}
+
+.offline .gauge,
+.offline .detail,
+.offline .sparkline,
+.offline .info-list .val {
+    filter: grayscale(0.9);
+    opacity: 0.45;
 }
 
 footer {

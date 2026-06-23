@@ -81,10 +81,46 @@ function formatUptime(seconds) {
     return parts.join(" ");
 }
 
-function setStatus(ok, text) {
-    document.getElementById("status-dot").classList.toggle("error", !ok);
-    // Le texte n'est plus affiché : conservé en infobulle au survol du badge.
-    document.getElementById("status").title = text;
+// État de connexion ------------------------------------------------------
+// Le flux SSE peut être rompu (serveur arrêté, réseau coupé). Les mesures
+// affichées sont alors figées : on le signale en désaturant les jauges et les
+// valeurs (classe `offline` sur <body>) et via un badge rouge « Hors ligne »
+// qui décompte le temps écoulé depuis le passage hors ligne.
+let offlineSince = 0; // horodatage (ms) du passage hors ligne
+let offlineTicker = null; // intervalle de mise à jour du libellé hors ligne
+
+// goOnline : flux actif, données fraîches. `title` alimente l'infobulle.
+function goOnline(title) {
+    document.body.classList.remove("offline");
+    document.getElementById("status").classList.remove("offline");
+    document.getElementById("status-dot").classList.remove("error");
+    document.getElementById("status-text").textContent = "";
+    document.getElementById("status").title = title;
+    if (offlineTicker) {
+        clearInterval(offlineTicker);
+        offlineTicker = null;
+    }
+}
+
+// goOffline : flux rompu, données figées. `title` décrit la cause (infobulle).
+function goOffline(title) {
+    if (!document.body.classList.contains("offline")) {
+        offlineSince = Date.now();
+    }
+    document.body.classList.add("offline");
+    document.getElementById("status").classList.add("offline");
+    document.getElementById("status-dot").classList.add("error");
+    document.getElementById("status").title = title;
+    if (!offlineTicker) {
+        renderOfflineLabel();
+        offlineTicker = setInterval(renderOfflineLabel, 1000);
+    }
+}
+
+// renderOfflineLabel affiche depuis combien de temps le flux est interrompu.
+function renderOfflineLabel() {
+    const secs = Math.max(0, Math.round((Date.now() - offlineSince) / 1000));
+    document.getElementById("status-text").textContent = secs < 3 ? "Hors ligne" : `Hors ligne · ${secs} s`;
 }
 
 // applyState met à jour l'interface à partir d'un état poussé par le flux SSE
@@ -147,7 +183,7 @@ function applyState(state) {
     }
 
     const time = new Date(data.timestamp).toLocaleTimeString("fr-FR");
-    setStatus(true, `Mis à jour à ${time}`);
+    goOnline(`À jour · dernière mesure à ${time}`);
 }
 
 // connect ouvre le flux SSE et met à jour l'interface à chaque événement.
@@ -159,13 +195,13 @@ function connect() {
         try {
             applyState(JSON.parse(event.data));
         } catch (err) {
-            setStatus(false, `Données invalides : ${err.message}`);
+            goOffline(`Données invalides : ${err.message}`);
         }
     };
 
     source.onerror = () => {
         // La connexion est rompue : EventSource tentera de se reconnecter seul.
-        setStatus(false, "Hors ligne : reconnexion…");
+        goOffline("Flux interrompu : tentative de reconnexion…");
     };
 }
 
