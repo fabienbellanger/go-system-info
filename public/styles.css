@@ -121,6 +121,18 @@ header {
     box-shadow: 0 6px 22px rgba(110, 139, 255, 0.18);
 }
 
+/* Version du binaire, affichée discrètement sous le titre — alignée sous le
+   texte (largeur du logo + espacement du h1), masquée tant qu'indisponible. */
+.version {
+    display: block;
+    margin-top: 0.3rem;
+    margin-left: calc(38px + 0.7rem);
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.02em;
+    color: var(--text-faint);
+}
+
 .status {
     display: flex;
     align-items: center;

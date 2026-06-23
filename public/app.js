@@ -260,7 +260,27 @@ async function resolveRefreshMs() {
     return DEFAULT_REFRESH_MS;
 }
 
+// showVersion récupère la version du binaire (injectée au build, exposée par
+// /api/version) et l'affiche sous le titre. En cas d'échec, le libellé reste
+// masqué.
+async function showVersion() {
+    const el = document.getElementById("version");
+    if (!el) return;
+    try {
+        const res = await fetch("/api/version", { cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const { version } = await res.json();
+        if (version) {
+            el.textContent = version;
+            el.hidden = false;
+        }
+    } catch (_) {
+        // version indisponible : on laisse le libellé masqué
+    }
+}
+
 (async () => {
+    showVersion(); // non bloquant : en parallèle de la résolution de l'intervalle
     const intervalMs = await resolveRefreshMs();
     const footer = document.getElementById("refresh-label");
     if (footer) footer.textContent = `${intervalMs / 1000} s`;
