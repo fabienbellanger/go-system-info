@@ -21,7 +21,7 @@ est séparée du serveur HTTP et du routage (`internal/server`).
 - 📈 Sparklines : courbes d'évolution CPU/RAM sur ~2 min (historique côté serveur)
 - 🌐 Métriques étendues : charge moyenne (load average) et débit réseau (↑/↓ + totaux)
 - 🔌 Push **temps réel** via Server-Sent Events (plus de polling)
-- 🟢 Indicateur de connexion à l'API (reconnexion automatique)
+- 🟢 État de connexion **visible** : en cas de coupure du flux, badge « Hors ligne » avec compteur, jauges et valeurs estompées ; reconnexion automatique
 - 📦 Tout est embarqué dans un seul binaire (interface, polices, favicon)
 - ⚡ Échantillonnage CPU/réseau en arrière-plan : réponses API instantanées
 - 🛡️ Serveur robuste : timeouts HTTP et arrêt gracieux (SIGINT/SIGTERM)
@@ -193,7 +193,10 @@ curl http://localhost:8222/api/system
 
 > Note : l'utilisation CPU et le débit réseau sont échantillonnés en continu par
 > des goroutines d'arrière-plan et mis en cache. Les requêtes `GET /api/system`
-> sont donc instantanées (aucun délai de mesure côté requête).
+> sont donc instantanées (aucun délai de mesure côté requête). L'utilisation CPU
+> est calculée en différenciant les temps CPU cumulés ; un relevé où les
+> compteurs n'ont pas progressé (cas observé sur macOS) est ignoré pour éviter un
+> `0 %` parasite sous charge — la dernière valeur connue est alors conservée.
 
 ### `GET /api/stream` (temps réel, SSE)
 
@@ -212,7 +215,9 @@ curl -N http://localhost:8222/api/stream
 
 > La connexion reste ouverte : le `WriteTimeout` du serveur est neutralisé pour
 > cette requête uniquement. En cas de coupure réseau, le navigateur
-> (`EventSource`) se reconnecte automatiquement.
+> (`EventSource`) se reconnecte automatiquement. L'interface signale la coupure
+> visuellement (badge « Hors ligne » avec décompte, jauges et valeurs estompées)
+> après un court délai de grâce (~2 intervalles), pour ignorer les micro-coupures.
 
 ### `GET /api/history`
 

@@ -246,30 +246,85 @@ func (s *cpuSampler) set(p float64) {
 	s.mu.Unlock()
 }
 
-// run mesure l'utilisation CPU sur des fenêtres successives de
-// cpuSampleInterval et met le résultat en cache, jusqu'à l'annulation de ctx.
-// La mesure est volontairement bloquante : dans cette goroutine dédiée, elle
-// n'affecte pas la latence des requêtes (qui lisent le cache) et, sur une
-// fenêtre fixe et bien définie, elle évite les zéros parasites que renvoie
-// l'appel non bloquant cpu.Percent(0, …) sur certaines plateformes (macOS
-// notamment), où le compteur de ticks agrégé n'avance pas toujours entre deux
-// lectures rapprochées.
+// run échantillonne l'utilisation CPU à intervalle régulier et met le résultat
+// en cache, jusqu'à l'annulation de ctx. Plutôt que cpu.Percent — qui renvoie
+// un 0 % indiscernable entre un CPU réellement au repos et un relevé fantôme —,
+// on différencie nous-mêmes les temps CPU cumulés : si les compteurs n'ont pas
+// progressé entre deux lectures (cas fréquent sur macOS, où host_statistics
+// renvoie parfois des ticks identiques), on conserve la dernière valeur connue
+// au lieu de publier un 0 % parasite alors que la machine est en réalité chargée.
 func (s *cpuSampler) run(ctx context.Context) {
-	for ctx.Err() == nil {
-		p, err := cpu.Percent(cpuSampleInterval, false)
-		if err != nil {
-			// En cas d'erreur, cpu.Percent peut revenir sans temporiser :
-			// on attend l'intervalle pour éviter une boucle active.
-			select {
-			case <-ctx.Done():
-			case <-time.After(cpuSampleInterval):
+	prev, ok := cpuTimes()
+
+	ticker := time.NewTicker(cpuSampleInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			cur, valid := cpuTimes()
+			if !valid {
+				continue
 			}
-			continue
-		}
-		if len(p) > 0 {
-			s.set(p[0])
+			if !ok {
+				prev, ok = cur, true
+				continue
+			}
+			if pct, moved := cpuBusyPercent(prev, cur); moved {
+				s.set(pct)
+				prev = cur
+			}
+			// Compteurs immobiles (relevé fantôme) : on garde la dernière
+			// valeur et on ne déplace pas `prev`, pour le comparer au prochain
+			// relevé qui, lui, aura progressé.
 		}
 	}
+}
+
+// cpuTimes lit les temps CPU cumulés agrégés sur l'ensemble des cœurs.
+func cpuTimes() (cpu.TimesStat, bool) {
+	t, err := cpu.Times(false)
+	if err != nil || len(t) == 0 {
+		return cpu.TimesStat{}, false
+	}
+	return t[0], true
+}
+
+// cpuBusyPercent calcule le taux d'occupation CPU (0–100) entre deux relevés de
+// temps cumulés. Le booléen vaut false lorsque le temps total n'a pas progressé :
+// le relevé est alors un fantôme (compteurs figés) et doit être ignoré plutôt
+// que de produire un 0 % trompeur.
+func cpuBusyPercent(prev, cur cpu.TimesStat) (float64, bool) {
+	prevAll, prevBusy := cpuAllBusy(prev)
+	curAll, curBusy := cpuAllBusy(cur)
+	totalDelta := curAll - prevAll
+	if totalDelta <= 0 {
+		return 0, false
+	}
+	pct := (curBusy - prevBusy) / totalDelta * 100
+	switch {
+	case pct < 0:
+		pct = 0
+	case pct > 100:
+		pct = 100
+	}
+	return pct, true
+}
+
+// cpuAllBusy renvoie le temps CPU total et le temps « occupé » (hors
+// inactivité) d'un relevé, selon le même découpage que gopsutil.
+func cpuAllBusy(t cpu.TimesStat) (all, busy float64) {
+	all = t.User + t.System + t.Nice + t.Idle + t.Iowait + t.Irq +
+		t.Softirq + t.Steal + t.Guest + t.GuestNice
+	if runtime.GOOS == "linux" {
+		// Sous Linux, User inclut déjà Guest et Nice inclut GuestNice : on les
+		// retire du total pour ne pas les compter deux fois.
+		all -= t.Guest + t.GuestNice
+	}
+	busy = all - t.Idle - t.Iowait
+	return all, busy
 }
 
 // netSampler maintient le dernier débit réseau connu, calculé en différentiant

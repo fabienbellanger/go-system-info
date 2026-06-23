@@ -4,6 +4,8 @@ import (
 	"runtime"
 	"testing"
 	"time"
+
+	"github.com/shirou/gopsutil/v4/cpu"
 )
 
 func TestCollect(t *testing.T) {
@@ -84,6 +86,43 @@ func BenchmarkHistorySnapshot(b *testing.B) {
 	for b.Loop() {
 		_ = h.snapshot()
 	}
+}
+
+func TestCPUBusyPercent(t *testing.T) {
+	t.Run("relevé nominal", func(t *testing.T) {
+		// total : 1000 → 2000 (delta 1000) ; occupé : 150 → 400 (delta 250) → 25 %.
+		prev := cpu.TimesStat{User: 100, System: 50, Idle: 850}
+		cur := cpu.TimesStat{User: 300, System: 100, Idle: 1600}
+		pct, moved := cpuBusyPercent(prev, cur)
+		if !moved {
+			t.Fatal("attendu moved=true pour des compteurs qui progressent")
+		}
+		if pct != 25 {
+			t.Errorf("pct = %v, attendu 25", pct)
+		}
+	})
+
+	t.Run("compteurs figés (relevé fantôme)", func(t *testing.T) {
+		// Deux lectures identiques : le total ne progresse pas. On doit signaler
+		// l'absence de mesure (moved=false) plutôt que de renvoyer un 0 % faux.
+		stat := cpu.TimesStat{User: 100, System: 50, Idle: 850}
+		if _, moved := cpuBusyPercent(stat, stat); moved {
+			t.Error("attendu moved=false pour des compteurs figés")
+		}
+	})
+
+	t.Run("repos réel", func(t *testing.T) {
+		// Le total progresse mais quasiment que de l'inactivité → ~0 %, valide.
+		prev := cpu.TimesStat{User: 100, System: 50, Idle: 850}
+		cur := cpu.TimesStat{User: 100, System: 50, Idle: 1850}
+		pct, moved := cpuBusyPercent(prev, cur)
+		if !moved {
+			t.Fatal("attendu moved=true : les compteurs progressent")
+		}
+		if pct != 0 {
+			t.Errorf("pct = %v, attendu 0", pct)
+		}
+	})
 }
 
 func TestNetRate(t *testing.T) {
