@@ -2,7 +2,7 @@
         build-all test test-cover bench lint fix tidy update-deps clean \
         docker-build docker-run
 
-BIN_NAME := Go System Info
+BIN_NAME := go-system-info
 SRC_DIR  := .
 DIST_DIR := dist
 VERSION  := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
