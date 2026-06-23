@@ -85,28 +85,49 @@ function formatUptime(seconds) {
 // Le flux SSE peut être rompu (serveur arrêté, réseau coupé). Les mesures
 // affichées sont alors figées : on le signale en désaturant les jauges et les
 // valeurs (classe `offline` sur <body>) et via un badge rouge « Hors ligne »
-// qui décompte le temps écoulé depuis le passage hors ligne.
-let offlineSince = 0; // horodatage (ms) du passage hors ligne
+// qui décompte le temps écoulé depuis la rupture.
+//
+// Une micro-coupure (reconnexion quasi immédiate du flux) ne doit pas faire
+// clignoter le badge : on n'allume l'état hors ligne qu'après un délai de
+// grâce (markOffline), annulé dès qu'une mesure arrive (goOnline).
+let offlineSince = 0; // horodatage (ms) de la rupture du flux
+let offlineTimer = null; // délai de grâce avant de basculer hors ligne
 let offlineTicker = null; // intervalle de mise à jour du libellé hors ligne
 
-// goOnline : flux actif, données fraîches. `title` alimente l'infobulle.
+// goOnline : flux actif, données fraîches. Annule tout passage hors ligne,
+// qu'il soit en attente du délai de grâce ou déjà affiché.
 function goOnline(title) {
+    if (offlineTimer) {
+        clearTimeout(offlineTimer);
+        offlineTimer = null;
+    }
+    if (offlineTicker) {
+        clearInterval(offlineTicker);
+        offlineTicker = null;
+    }
+    offlineSince = 0;
     document.body.classList.remove("offline");
     document.getElementById("status").classList.remove("offline");
     document.getElementById("status-dot").classList.remove("error");
     document.getElementById("status-text").textContent = "";
     document.getElementById("status").title = title;
-    if (offlineTicker) {
-        clearInterval(offlineTicker);
-        offlineTicker = null;
-    }
 }
 
-// goOffline : flux rompu, données figées. `title` décrit la cause (infobulle).
+// markOffline programme le passage hors ligne après un délai de grâce
+// (graceMs) : tant qu'il n'a pas expiré, l'interface reste « en ligne ». Le
+// décompte affiché ensuite part de l'instant réel de la rupture.
+function markOffline(graceMs, title) {
+    if (offlineTimer || document.body.classList.contains("offline")) return;
+    offlineSince = Date.now();
+    offlineTimer = setTimeout(() => {
+        offlineTimer = null;
+        goOffline(title);
+    }, graceMs);
+}
+
+// goOffline bascule réellement l'interface en mode figé (données gelées).
 function goOffline(title) {
-    if (!document.body.classList.contains("offline")) {
-        offlineSince = Date.now();
-    }
+    if (!offlineSince) offlineSince = Date.now();
     document.body.classList.add("offline");
     document.getElementById("status").classList.add("offline");
     document.getElementById("status-dot").classList.add("error");
@@ -188,20 +209,25 @@ function applyState(state) {
 
 // connect ouvre le flux SSE et met à jour l'interface à chaque événement.
 // EventSource gère la reconnexion automatiquement en cas de coupure.
-function connect() {
+function connect(intervalMs) {
+    // Délai de grâce avant d'annoncer une coupure : ~2 intervalles ratés, avec
+    // un plancher pour les rafraîchissements très rapides.
+    const graceMs = Math.max(2 * intervalMs, 2000);
     const source = new EventSource("/api/stream");
 
     source.onmessage = (event) => {
         try {
             applyState(JSON.parse(event.data));
         } catch (err) {
+            // Flux vivant mais donnée illisible : signalé sans délai de grâce.
             goOffline(`Données invalides : ${err.message}`);
         }
     };
 
     source.onerror = () => {
-        // La connexion est rompue : EventSource tentera de se reconnecter seul.
-        goOffline("Flux interrompu : tentative de reconnexion…");
+        // Coupure possible : EventSource retentera seul. On n'allume le badge
+        // qu'après le délai de grâce, pour ignorer les micro-coupures.
+        markOffline(graceMs, "Flux interrompu : tentative de reconnexion…");
     };
 }
 
@@ -222,5 +248,5 @@ async function resolveRefreshMs() {
     const intervalMs = await resolveRefreshMs();
     const footer = document.getElementById("refresh-label");
     if (footer) footer.textContent = `${intervalMs / 1000} s`;
-    connect();
+    connect(intervalMs);
 })();
