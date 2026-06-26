@@ -263,6 +263,11 @@ header {
     justify-content: space-between;
 }
 
+/* Carte pleine largeur (liste des processus) : occupe toute la rangée. */
+.card-full {
+    grid-column: span 6;
+}
+
 @media (max-width: 900px) {
     .grid {
         grid-template-columns: repeat(2, 1fr);
@@ -271,8 +276,9 @@ header {
     .card-wide {
         grid-column: span 1;
     }
-    .host-card {
-        grid-column: span 2; /* l'hôte occupe la dernière rangée en entier */
+    .host-card,
+    .card-full {
+        grid-column: span 2; /* occupent la rangée en entier */
     }
 }
 
@@ -282,7 +288,8 @@ header {
     }
     .card-gauge,
     .card-wide,
-    .host-card {
+    .host-card,
+    .card-full {
         grid-column: span 1;
     }
 }
@@ -543,6 +550,455 @@ header {
     cursor: help;
 }
 
+/* ---------- Sélecteur CPU / Mémoire (carte Processus) ---------- */
+.seg {
+    margin-left: auto; /* pousse le sélecteur à droite du titre */
+    display: inline-flex;
+    gap: 2px;
+    padding: 2px;
+    border: 1px solid var(--card-border);
+    border-radius: 8px;
+    background: var(--track);
+}
+
+.seg-btn {
+    font-family: inherit;
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    background: transparent;
+    border: none;
+    padding: 0.28rem 0.7rem;
+    border-radius: 6px;
+    cursor: pointer;
+    transition:
+        background 0.25s,
+        color 0.25s;
+}
+
+.seg-btn:hover {
+    color: var(--text);
+}
+
+.seg-btn.active {
+    color: var(--text);
+    background: color-mix(in srgb, var(--accent) 32%, transparent);
+}
+
+/* ---------- Liste des processus ---------- */
+.proc-list {
+    list-style: none;
+    counter-reset: proc;
+}
+
+.proc-list li {
+    display: grid;
+    /* rang · nom · utilisateur · barre (extensible) · valeur */
+    grid-template-columns: 1.6rem minmax(6rem, 1fr) minmax(4rem, max-content) minmax(4rem, 12rem) 4.2rem;
+    align-items: center;
+    gap: 0.9rem;
+    padding: 0.5rem 0.6rem;
+    border-bottom: 1px solid var(--card-border);
+    font-size: 0.88rem;
+}
+
+/* Lignes cliquables : sélection d'un processus pour en voir le détail. */
+.proc-row {
+    cursor: pointer;
+    border-radius: 8px;
+    transition:
+        background 0.2s,
+        box-shadow 0.2s;
+}
+
+.proc-row:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.proc-row:focus-visible {
+    outline: none;
+    box-shadow: inset 0 0 0 1px var(--card-border-hover);
+}
+
+.proc-row.selected {
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.proc-list li:last-child {
+    border-bottom: none;
+}
+
+.proc-list li::before {
+    counter-increment: proc;
+    content: counter(proc);
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--text-faint);
+    text-align: right;
+}
+
+.proc-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.proc-count {
+    margin-left: 0.4rem;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--text-faint);
+}
+
+.proc-user {
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ---------- Corps de la carte : liste + panneau de détails côte à côte ---------- */
+.proc-body {
+    display: grid;
+    grid-template-columns: 1fr;
+}
+
+.proc-body.with-detail {
+    grid-template-columns: minmax(0, 1fr) minmax(400px, 480px);
+    gap: 1.5rem;
+}
+
+/* En vue côte à côte, on resserre la liste (barres de progression réduites) pour
+   laisser plus de place au panneau de détails. */
+@media (min-width: 761px) {
+    .with-detail .proc-list li {
+        grid-template-columns: 1.4rem minmax(5rem, 1fr) minmax(3.5rem, max-content) minmax(2rem, 5rem) 3.8rem;
+        gap: 0.7rem;
+    }
+}
+
+/* ---------- Panneau de détails du processus sélectionné ---------- */
+.proc-detail {
+    align-self: start;
+    position: sticky;
+    top: 1rem;
+}
+
+/* En colonne latérale : séparateur à gauche plutôt qu'au-dessus. */
+.with-detail .proc-detail {
+    border-left: 1px solid var(--card-border);
+    padding-left: 1.5rem;
+}
+
+/* En pile (petits écrans, voir plus bas) : séparateur au-dessus. */
+.proc-body:not(.with-detail) .proc-detail {
+    border-top: 1px solid var(--card-border);
+    margin-top: 1.1rem;
+    padding-top: 1.1rem;
+}
+
+.proc-detail-head {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.9rem;
+}
+
+.proc-detail-title {
+    font-size: 1rem;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.proc-detail-close {
+    margin-left: auto;
+    font-family: inherit;
+    font-size: 0.82rem;
+    line-height: 1;
+    color: var(--text-faint);
+    background: transparent;
+    border: 1px solid var(--card-border);
+    border-radius: 6px;
+    padding: 0.25rem 0.5rem;
+    cursor: pointer;
+    transition:
+        color 0.2s,
+        border-color 0.2s;
+}
+
+.proc-detail-close:hover {
+    color: var(--text);
+    border-color: var(--card-border-hover);
+}
+
+/* Résumé : grille de paires clé/valeur, vivantes (suivent les rafraîchissements).
+   Trois colonnes pour les champs courts (Utilisateur, Instances, Mémoire) sur une
+   même ligne ; le CPU, plus long (ses deux échelles), occupe toute la largeur via
+   .wide en dessous, pour rester lisible sans débordement. */
+.proc-detail-summary {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.7rem 1.2rem;
+    margin-bottom: 1rem;
+}
+
+.proc-detail-summary > div {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-width: 0;
+}
+
+.proc-detail-summary > div.wide {
+    grid-column: 1 / -1;
+}
+
+.proc-detail-summary .k {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-faint);
+}
+
+.proc-detail-summary .v {
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.proc-detail-actions:empty {
+    display: none;
+}
+
+.proc-detail-actions {
+    margin-bottom: 1rem;
+}
+
+/* Bouton de terminaison (dans le panneau) : action destructive, teintée de rouge. */
+.proc-kill {
+    font-family: inherit;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--red);
+    background: rgba(255, 107, 107, 0.1);
+    border: 1px solid rgba(255, 107, 107, 0.3);
+    border-radius: 8px;
+    padding: 0.45rem 0.9rem;
+    cursor: pointer;
+    transition:
+        background 0.2s,
+        border-color 0.2s,
+        opacity 0.2s;
+}
+
+.proc-kill:hover {
+    background: rgba(255, 107, 107, 0.18);
+    border-color: rgba(255, 107, 107, 0.5);
+}
+
+.proc-kill:disabled {
+    cursor: default;
+    opacity: 0.6;
+}
+
+/* Libellé de section au-dessus de l'arbre. */
+.proc-detail-tree-label {
+    font-size: 0.66rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-faint);
+    margin-bottom: 0.5rem;
+}
+
+/* Arbre des processus : liste de nœuds indentés selon leur profondeur, dans une
+   zone défilable (un arbre d'application peut être grand). */
+.proc-detail-instances {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 320px;
+    overflow-y: auto;
+    font-size: 0.82rem;
+    color: var(--text-dim);
+}
+
+.pd-node {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    /* Indentation proportionnelle à la profondeur dans l'arbre. */
+    padding: 0.3rem 0.4rem 0.3rem calc(0.4rem + var(--depth, 0) * 1rem);
+    border-radius: 7px;
+    position: relative;
+}
+
+.pd-node:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+/* Filet vertical de hiérarchie pour les nœuds enfants. */
+.pd-node[style*="--depth"]:not([style*="--depth: 0"])::before {
+    content: "";
+    position: absolute;
+    left: calc(var(--depth, 0) * 1rem - 0.1rem);
+    top: 0;
+    bottom: 0;
+    border-left: 1px solid var(--card-border);
+}
+
+.pd-node-info {
+    min-width: 0;
+    flex: 1;
+}
+
+.pd-node-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+}
+
+.pd-pid {
+    font-weight: 600;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+}
+
+.pd-meta {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--text-faint);
+}
+
+/* Bouton de terminaison par nœud de l'arbre. */
+.pd-node-kill {
+    flex-shrink: 0;
+    font-family: inherit;
+    font-size: 0.78rem;
+    line-height: 1;
+    color: var(--text-faint);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 0.2rem 0.4rem;
+    cursor: pointer;
+    opacity: 0;
+    transition:
+        color 0.2s,
+        background 0.2s,
+        border-color 0.2s,
+        opacity 0.2s;
+}
+
+.pd-node:hover .pd-node-kill,
+.pd-node-kill:focus-visible {
+    opacity: 1;
+}
+
+.pd-node-kill:hover {
+    color: var(--red);
+    background: rgba(255, 107, 107, 0.1);
+    border-color: rgba(255, 107, 107, 0.3);
+}
+
+.pd-node-kill:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+/* Mini-barre proportionnelle à la consommation, colorée selon le seuil. */
+.proc-bar {
+    height: 6px;
+    border-radius: 999px;
+    background: var(--track);
+    overflow: hidden;
+}
+
+.proc-bar-fill {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--accent); /* couleur posée dynamiquement par app.js */
+    transition:
+        width 0.4s ease,
+        background 0.4s ease;
+}
+
+.proc-val {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    justify-content: center;
+    text-align: right;
+    font-family: var(--mono);
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.15;
+}
+
+/* Sous-valeur (% machine) : même couleur, plus petite et atténuée. */
+.proc-val-sub {
+    font-size: 0.72em;
+    font-weight: 400;
+    opacity: 0.6;
+    white-space: nowrap;
+}
+
+/* Lignes d'attente / vide : message centré et discret. */
+.proc-list .proc-empty {
+    display: block;
+    grid-template-columns: none;
+    text-align: center;
+    color: var(--text-faint);
+    font-size: 0.84rem;
+}
+
+.proc-list .proc-empty::before {
+    content: none;
+}
+
+/* Écrans étroits : le panneau de détails passe sous la liste plutôt qu'à côté. */
+@media (max-width: 760px) {
+    .proc-body.with-detail {
+        grid-template-columns: 1fr;
+        gap: 0;
+    }
+    .with-detail .proc-detail {
+        border-left: none;
+        padding-left: 0;
+        border-top: 1px solid var(--card-border);
+        margin-top: 1.1rem;
+        padding-top: 1.1rem;
+        position: static;
+    }
+    /* Sur écran étroit, 3 colonnes seraient trop serrées pour la valeur mémoire :
+       on repasse à 2 colonnes. */
+    .proc-detail-summary {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+/* Sur petits écrans, on masque la barre (le pourcentage suffit) et on resserre :
+   rang · nom · utilisateur · valeur. */
+@media (max-width: 560px) {
+    .proc-list li {
+        grid-template-columns: 1.4rem 1fr minmax(3rem, max-content) 4rem;
+        gap: 0.5rem;
+    }
+    .proc-bar {
+        display: none;
+    }
+}
+
 /* ---------- État hors ligne (flux rompu : données figées) ---------- */
 /* Les mesures ne sont plus rafraîchies : on désature et on estompe les jauges,
    les sparklines et les valeurs pour signaler sans ambiguïté qu'elles sont
@@ -559,7 +1015,8 @@ header {
 .offline .gauge,
 .offline .detail,
 .offline .sparkline,
-.offline .info-list .val {
+.offline .info-list .val,
+.offline .proc-list {
     filter: grayscale(0.9);
     opacity: 0.45;
 }

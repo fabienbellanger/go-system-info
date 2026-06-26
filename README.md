@@ -179,6 +179,34 @@ curl http://localhost:8222/api/system
     "sent_bytes_per_sec": 3315.0,
     "recv_total_bytes": 594250003,
     "sent_total_bytes": 96421144
+  },
+  "processes": {
+    "top_cpu": [
+      {
+        "name": "chrome",
+        "count": 8,
+        "user": "fabien",
+        "cpu_percent": 152.4,
+        "cpu_percent_system": 19.05,
+        "mem_percent": 12.4,
+        "mem_bytes": 1064960000,
+        "pids": [101, 102, 103],
+        "killable": true
+      }
+    ],
+    "top_mem": [
+      {
+        "name": "chrome",
+        "count": 8,
+        "user": "fabien",
+        "cpu_percent": 152.4,
+        "cpu_percent_system": 19.05,
+        "mem_percent": 12.4,
+        "mem_bytes": 1064960000,
+        "pids": [101, 102, 103],
+        "killable": true
+      }
+    ]
   }
 }
 ```
@@ -190,10 +218,29 @@ curl http://localhost:8222/api/system
 - **`net`** : activité réseau agrégée sur toutes les interfaces — débit
   instantané (octets/s) calculé en différenciant les compteurs cumulés, et
   volumes totaux reçus/émis depuis le démarrage.
+- **`processes`** : les deux classements (`top_cpu`, `top_mem`) des 10 plus gros
+  consommateurs. Les processus sont **regroupés par application** : chaque
+  processus est rattaché à son ancêtre de plus haut niveau (le processus dont le
+  parent est `launchd`/pid 1) et **tout le sous-arbre est sommé** sous le nom de
+  cette racine — ainsi tous les « Helium Helper » comptent dans « Helium », et un
+  outil lancé depuis un terminal/IDE est comptabilisé sous celui-ci. `count` est
+  le nombre de processus de l'arbre, `pids` leur liste. `cpu_percent` est exprimé
+  en **% d'un cœur** (façon `top`/`htop`) : un programme multi-thread peut
+  dépasser 100 %. `cpu_percent_system` est la **même charge rapportée à la
+  machine entière** (`cpu_percent` / nombre de cœurs) : sur la même base que la
+  jauge CPU globale (0–100 %), la somme des processus s'en approche. `mem_bytes`
+  est le RSS cumulé. `user` est le propriétaire de la
+  racine, et `killable` vaut `true` lorsque **tout le sous-arbre** appartient à
+  l'utilisateur ayant lancé le serveur — seuls ces arbres peuvent être terminés
+  (voir `POST /api/processes/kill`). Champ **omis** d'un relevé ponctuel obtenu
+  via la fonction `Collect` libre (sans collecteur d'arrière-plan).
 
-> Note : l'utilisation CPU et le débit réseau sont échantillonnés en continu par
-> des goroutines d'arrière-plan et mis en cache. Les requêtes `GET /api/system`
-> sont donc instantanées (aucun délai de mesure côté requête). L'utilisation CPU
+> Note : l'utilisation CPU, le débit réseau et le classement des processus (relevé
+> plus espacé, toutes les 3 s, car énumérer tous les processus est coûteux) sont
+> échantillonnés en continu par des goroutines d'arrière-plan et mis en cache. Les
+> requêtes `GET /api/system` sont donc instantanées (aucun délai de mesure côté
+> requête). L'utilisation CPU des processus est, comme celle du système, calculée
+> en différenciant les temps CPU cumulés entre deux relevés. L'utilisation CPU
 > est calculée en différenciant les temps CPU cumulés ; un relevé où les
 > compteurs n'ont pas progressé (cas observé sur macOS) est ignoré pour éviter un
 > `0 %` parasite sous charge — la dernière valeur connue est alors conservée.
@@ -247,6 +294,46 @@ Renvoie la version du binaire, injectée au build via `-ldflags`.
 curl http://localhost:8222/api/version
 # {"version":"v1.0.0"}
 ```
+
+### `POST /api/processes/kill`
+
+Termine (signal **SIGTERM**) un ou plusieurs processus, identifiés par leurs PID.
+C'est le pendant écriture de la carte « Processus » de l'interface : le bouton de
+terminaison envoie les `pids` du groupe fusionné.
+
+```bash
+curl -X POST http://localhost:8222/api/processes/kill \
+  -H 'Content-Type: application/json' \
+  -d '{"pids":[101,102,103]}'
+# {"results":[{"pid":101,"ok":true},{"pid":102,"ok":true},{"pid":103,"ok":true}]}
+```
+
+> **Garde-fou de sécurité** : le serveur ne termine que les processus appartenant
+> à **l'utilisateur qui l'a lancé**. Toute autre cible est refusée (`ok:false`
+> avec un message), avant même l'envoi du signal. Chaque PID est revérifié au
+> moment de la terminaison (et non d'après l'instantané mis en cache).
+>
+> ⚠️ Cet endpoint a un effet de bord destructif. Si vous exposez le serveur
+> au-delà de `localhost`, protégez-le en amont (pare-feu, reverse-proxy
+> authentifié) : la restriction « même utilisateur » limite la portée mais
+> n'authentifie pas l'appelant.
+
+### `GET /api/processes/detail`
+
+Renvoie le détail courant des processus dont les PID sont passés dans le
+paramètre `pids` (séparés par des virgules). C'est ce qui alimente le panneau de
+détails de l'interface lorsqu'on sélectionne une application : `ppid` et `name`
+permettent d'y reconstruire l'**arbre** parent → enfants.
+
+```bash
+curl 'http://localhost:8222/api/processes/detail?pids=101,102'
+# {"instances":[{"pid":101,"ppid":1,"user":"fabien","name":"Helium",
+#   "cmdline":"/Applications/…","status":"running","threads":42,
+#   "create_time":1719400000000,"mem_bytes":123456}]}
+```
+
+Les processus inaccessibles ou disparus sont simplement absents de la réponse
+(le nombre de PID interrogeables en une requête est borné).
 
 ## Versionnage du binaire
 
@@ -368,6 +455,8 @@ systeminfo/
 | `GET`   | `/api/config`  | Configuration de l'interface (intervalle en ms) |
 | `GET`   | `/api/health`  | Sonde de santé (`{"status":"ok"}`)              |
 | `GET`   | `/api/version` | Version du binaire injectée au build            |
+| `POST`  | `/api/processes/kill` | Termine des processus (SIGTERM, même utilisateur uniquement) |
+| `GET`   | `/api/processes/detail` | Détail par PID (`?pids=…`) du processus sélectionné       |
 
 ## Qualité, tests et CI
 

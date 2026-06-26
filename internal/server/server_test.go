@@ -18,8 +18,10 @@ import (
 // stubCollector est un collecteur factice pour les tests : il renvoie des
 // valeurs prédéfinies sans interroger la machine.
 type stubCollector struct {
-	info *sysinfo.Info
-	err  error
+	info    *sysinfo.Info
+	err     error
+	killErr error    // erreur renvoyée par Kill (nil = succès)
+	killed  *[]int32 // PID effectivement passés à Kill (si non nil)
 }
 
 func (s stubCollector) Start(context.Context) {}
@@ -27,6 +29,21 @@ func (s stubCollector) Start(context.Context) {}
 func (s stubCollector) Collect() (*sysinfo.Info, error) { return s.info, s.err }
 
 func (s stubCollector) History() []sysinfo.HistorySample { return nil }
+
+func (s stubCollector) Kill(pid int32) error {
+	if s.killed != nil {
+		*s.killed = append(*s.killed, pid)
+	}
+	return s.killErr
+}
+
+func (s stubCollector) Details(pids []int32) []sysinfo.ProcessDetail {
+	details := make([]sysinfo.ProcessDetail, len(pids))
+	for i, pid := range pids {
+		details[i] = sysinfo.ProcessDetail{PID: pid}
+	}
+	return details
+}
 
 // newTestServer construit un serveur avec un contenu statique factice.
 func newTestServer(refresh time.Duration) *Server {
@@ -97,6 +114,146 @@ func TestHandleSystemError(t *testing.T) {
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("code = %d, attendu %d", rec.Code, http.StatusInternalServerError)
+	}
+}
+
+func TestHandleKill(t *testing.T) {
+	t.Run("succès : transmet les PID au collecteur", func(t *testing.T) {
+		var killed []int32
+		srv := &Server{
+			cfg:       Config{Static: fstest.MapFS{}},
+			collector: stubCollector{killed: &killed},
+		}
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/processes/kill",
+			strings.NewReader(`{"pids":[42,43]}`))
+
+		srv.Handler().ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("code = %d, attendu %d", rec.Code, http.StatusOK)
+		}
+		if len(killed) != 2 || killed[0] != 42 || killed[1] != 43 {
+			t.Errorf("PID transmis = %v, attendu [42 43]", killed)
+		}
+		var body struct {
+			Results []struct {
+				PID int32 `json:"pid"`
+				OK  bool  `json:"ok"`
+			} `json:"results"`
+		}
+		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+			t.Fatalf("décodage : %v", err)
+		}
+		if len(body.Results) != 2 || !body.Results[0].OK {
+			t.Errorf("résultats inattendus : %+v", body.Results)
+		}
+	})
+
+	t.Run("échec du collecteur : signalé par résultat", func(t *testing.T) {
+		srv := &Server{
+			cfg:       Config{Static: fstest.MapFS{}},
+			collector: stubCollector{killErr: errors.New("refusé")},
+		}
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/processes/kill",
+			strings.NewReader(`{"pids":[1]}`))
+
+		srv.Handler().ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("code = %d, attendu %d", rec.Code, http.StatusOK)
+		}
+		var body struct {
+			Results []struct {
+				OK    bool   `json:"ok"`
+				Error string `json:"error"`
+			} `json:"results"`
+		}
+		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+			t.Fatalf("décodage : %v", err)
+		}
+		if len(body.Results) != 1 || body.Results[0].OK || body.Results[0].Error == "" {
+			t.Errorf("attendu un échec rapporté, obtenu %+v", body.Results)
+		}
+	})
+
+	t.Run("corps vide : 400", func(t *testing.T) {
+		srv := &Server{
+			cfg:       Config{Static: fstest.MapFS{}},
+			collector: stubCollector{},
+		}
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/processes/kill",
+			strings.NewReader(`{"pids":[]}`))
+
+		srv.Handler().ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("code = %d, attendu %d", rec.Code, http.StatusBadRequest)
+		}
+	})
+
+	t.Run("méthode GET refusée", func(t *testing.T) {
+		srv := newTestServer(time.Second)
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/processes/kill", nil)
+
+		srv.Handler().ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("code = %d, attendu %d", rec.Code, http.StatusMethodNotAllowed)
+		}
+	})
+}
+
+func TestHandleDetail(t *testing.T) {
+	t.Run("renvoie les instances pour les PID demandés", func(t *testing.T) {
+		srv := &Server{cfg: Config{Static: fstest.MapFS{}}, collector: stubCollector{}}
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/processes/detail?pids=10,20", nil)
+
+		srv.Handler().ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("code = %d, attendu %d", rec.Code, http.StatusOK)
+		}
+		var body struct {
+			Instances []struct {
+				PID int32 `json:"pid"`
+			} `json:"instances"`
+		}
+		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+			t.Fatalf("décodage : %v", err)
+		}
+		if len(body.Instances) != 2 || body.Instances[0].PID != 10 || body.Instances[1].PID != 20 {
+			t.Errorf("instances inattendues : %+v", body.Instances)
+		}
+	})
+
+	t.Run("pids manquant ou invalide : 400", func(t *testing.T) {
+		srv := &Server{cfg: Config{Static: fstest.MapFS{}}, collector: stubCollector{}}
+		for _, q := range []string{"", "?pids=", "?pids=abc"} {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/api/processes/detail"+q, nil)
+			srv.Handler().ServeHTTP(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("query %q : code = %d, attendu %d", q, rec.Code, http.StatusBadRequest)
+			}
+		}
+	})
+}
+
+func TestParsePIDs(t *testing.T) {
+	got := parsePIDs("10, 20 ,abc,-3,0,30")
+	want := []int32{10, 20, 30}
+	if len(got) != len(want) {
+		t.Fatalf("parsePIDs = %v, attendu %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("parsePIDs[%d] = %d, attendu %d", i, got[i], want[i])
+		}
 	}
 }
 

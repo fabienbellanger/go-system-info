@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -41,6 +43,8 @@ type systemCollector interface {
 	Start(ctx context.Context)
 	Collect() (*sysinfo.Info, error)
 	History() []sysinfo.HistorySample
+	Kill(pid int32) error
+	Details(pids []int32) []sysinfo.ProcessDetail
 }
 
 // Server encapsule la configuration et le routage HTTP.
@@ -64,6 +68,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/config", s.handleConfig)
 	mux.HandleFunc("/api/health", s.handleHealth)
 	mux.HandleFunc("/api/version", s.handleVersion)
+	mux.HandleFunc("/api/processes/kill", s.handleKill)
+	mux.HandleFunc("/api/processes/detail", s.handleDetail)
 	mux.Handle("/", http.FileServer(http.FS(s.cfg.Static)))
 	return logRequests(mux)
 }
@@ -125,6 +131,80 @@ func (s *Server) handleSystem(w http.ResponseWriter, _ *http.Request) {
 // du plus ancien au plus récent, au format JSON.
 func (s *Server) handleHistory(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, s.collector.History())
+}
+
+// killResult rapporte l'issue d'une demande de terminaison pour un PID donné.
+type killResult struct {
+	PID   int32  `json:"pid"`
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
+// handleKill termine les processus dont les PID sont fournis dans le corps JSON
+// ({"pids":[…]}). La sécurité est déléguée au collecteur, qui refuse tout
+// processus n'appartenant pas à l'utilisateur ayant lancé le serveur.
+func (s *Server) handleKill(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "méthode non autorisée", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		PIDs []int32 `json:"pids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "corps JSON invalide", http.StatusBadRequest)
+		return
+	}
+	if len(req.PIDs) == 0 {
+		http.Error(w, "aucun PID fourni", http.StatusBadRequest)
+		return
+	}
+
+	results := make([]killResult, 0, len(req.PIDs))
+	for _, pid := range req.PIDs {
+		res := killResult{PID: pid, OK: true}
+		if err := s.collector.Kill(pid); err != nil {
+			res.OK = false
+			res.Error = err.Error()
+		}
+		results = append(results, res)
+	}
+	writeJSON(w, map[string]any{"results": results})
+}
+
+// maxDetailPIDs borne le nombre de PID interrogeables en une requête de détail.
+const maxDetailPIDs = 128
+
+// handleDetail renvoie le détail courant des processus dont les PID sont passés
+// dans le paramètre de requête `pids` (liste séparée par des virgules).
+func (s *Server) handleDetail(w http.ResponseWriter, r *http.Request) {
+	pids := parsePIDs(r.URL.Query().Get("pids"))
+	if len(pids) == 0 {
+		http.Error(w, "paramètre pids manquant ou invalide", http.StatusBadRequest)
+		return
+	}
+	if len(pids) > maxDetailPIDs {
+		pids = pids[:maxDetailPIDs]
+	}
+	writeJSON(w, map[string]any{"instances": s.collector.Details(pids)})
+}
+
+// parsePIDs convertit une liste de PID séparés par des virgules ("12,34") en
+// entiers, en ignorant silencieusement les entrées vides ou non numériques.
+func parsePIDs(raw string) []int32 {
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	pids := make([]int32, 0, len(parts))
+	for _, part := range parts {
+		n, err := strconv.Atoi(strings.TrimSpace(part))
+		if err != nil || n <= 0 {
+			continue
+		}
+		pids = append(pids, int32(n))
+	}
+	return pids
 }
 
 // streamState est la charge utile poussée à chaque événement SSE : l'état

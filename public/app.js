@@ -1,6 +1,21 @@
 const DEFAULT_REFRESH_MS = 3000; // valeur de repli si /api/config est indisponible
 const CIRCUMFERENCE = 2 * Math.PI * 60; // r = 60
 
+// Mode d'affichage de la carte Processus : tri par CPU ou par mémoire. Le
+// basculement se fait côté client (les deux classements sont déjà reçus), sans
+// rouvrir le flux SSE.
+let procMode = "cpu";
+// Dernier état reçu, mémorisé pour re-rendre les processus lors d'un changement
+// de mode sans attendre le prochain événement SSE.
+let lastState = null;
+// Processus sélectionné (suivi par nom, stable même quand la liste se réordonne)
+// et clé des PID déjà chargés dans le panneau de détails (pour éviter de
+// re-télécharger les instances tant qu'elles n'ont pas changé).
+let selectedProc = null;
+let selectedPids = [];
+let selectedKillable = false;
+let loadedInstancesKey = null;
+
 // Couleur selon le seuil d'utilisation.
 function colorFor(pct) {
     if (pct >= 90) return "var(--red)";
@@ -45,6 +60,368 @@ function renderSparkline(prefix, values) {
     line.setAttribute("points", coords.join(" "));
     area.setAttribute("points", `0,${H} ${coords.join(" ")} ${W},${H}`);
     svg.style.color = colorFor(values[values.length - 1]);
+}
+
+// renderProcesses remplit la liste des processus selon le mode courant
+// (CPU ou mémoire), puis synchronise le panneau de détails. `processes` provient
+// du flux ({ top_cpu, top_mem }) ; il peut être absent/null tant que le premier
+// échantillon n'a pas été calculé.
+function renderProcesses(processes) {
+    const list = document.getElementById("proc-list");
+    if (!list) return;
+
+    const items = processes ? (procMode === "mem" ? processes.top_mem : processes.top_cpu) : null;
+    if (!Array.isArray(items) || items.length === 0) {
+        const li = document.createElement("li");
+        li.className = "proc-empty";
+        li.textContent = processes ? "Aucune donnée de processus" : "Mesure en cours…";
+        list.replaceChildren(li);
+    } else {
+        list.replaceChildren(...items.map(buildProcRow));
+    }
+
+    syncProcDetail(processes);
+}
+
+// buildProcRow construit la ligne d'un processus (rang via CSS, nom, utilisateur,
+// barre, valeur). Cliquer la ligne la sélectionne (suivi par nom). Les chaînes
+// issues du système sont insérées via textContent.
+function buildProcRow(p) {
+    const li = document.createElement("li");
+    li.className = "proc-row";
+    if (p.name === selectedProc) li.classList.add("selected");
+    li.tabIndex = 0;
+    li.addEventListener("click", () => selectProc(p.name));
+    li.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            selectProc(p.name);
+        }
+    });
+
+    const name = document.createElement("span");
+    name.className = "proc-name";
+    name.textContent = p.name || "—";
+    name.title = p.name || "";
+    if (p.count > 1) {
+        const count = document.createElement("span");
+        count.className = "proc-count";
+        count.textContent = `×${p.count}`;
+        name.appendChild(count);
+    }
+
+    const user = document.createElement("span");
+    user.className = "proc-user";
+    user.textContent = p.user || "—";
+    user.title = p.user ? `Lancé par ${p.user}` : "Propriétaire indéterminé";
+
+    // Le pourcentage pilote la barre et la couleur. En mode CPU il s'agit du %
+    // d'un cœur (style top, peut dépasser 100 %) ; la barre est plafonnée à 100 %.
+    const pct = procMode === "mem" ? p.mem_percent || 0 : p.cpu_percent || 0;
+    const color = colorFor(pct);
+
+    const bar = document.createElement("span");
+    bar.className = "proc-bar";
+    const fill = document.createElement("span");
+    fill.className = "proc-bar-fill";
+    fill.style.width = `${Math.min(Math.max(pct, 0), 100)}%`;
+    fill.style.background = color;
+    bar.appendChild(fill);
+
+    const val = document.createElement("span");
+    val.className = "proc-val";
+    val.style.color = color;
+    if (procMode === "mem") {
+        val.textContent = formatBytes(p.mem_bytes || 0);
+    } else {
+        // CPU : valeur principale en % d'un cœur (style top), et en dessous, plus
+        // discret, la même charge rapportée à la machine entière (% machine), sur
+        // la même base que la jauge CPU globale.
+        const main = document.createElement("span");
+        main.className = "proc-val-main";
+        main.textContent = formatCpu(p.cpu_percent || 0);
+        const sub = document.createElement("span");
+        sub.className = "proc-val-sub";
+        sub.textContent = formatCpu(p.cpu_percent_system || 0);
+        val.title = `${formatCpu(p.cpu_percent || 0)} d'un cœur · ${formatCpu(p.cpu_percent_system || 0)} de la machine`;
+        val.append(main, sub);
+    }
+
+    li.append(name, user, bar, val);
+    return li;
+}
+
+// formatCpu met en forme un pourcentage CPU par cœur (style top) : une décimale
+// en dessous de 10 % pour ne pas perdre les petites valeurs, sinon un entier.
+function formatCpu(pct) {
+    const v = Math.max(pct, 0);
+    return `${v.toFixed(v < 10 ? 1 : 0)} %`;
+}
+
+// findProcByName retrouve un groupe par nom dans les deux classements.
+function findProcByName(processes, name) {
+    if (!processes) return null;
+    const lists = [processes.top_cpu, processes.top_mem];
+    for (const list of lists) {
+        if (Array.isArray(list)) {
+            const hit = list.find((p) => p.name === name);
+            if (hit) return hit;
+        }
+    }
+    return null;
+}
+
+// selectProc (dé)sélectionne un groupe de processus et rafraîchit l'affichage.
+function selectProc(name) {
+    selectedProc = selectedProc === name ? null : name;
+    loadedInstancesKey = null; // forcera le rechargement des instances
+    if (lastState) renderProcesses(lastState.system.processes);
+}
+
+// syncProcDetail met à jour le panneau de détails (latéral) à partir des données
+// vivantes. Le résumé suit chaque rafraîchissement ; l'arbre des processus n'est
+// rechargé que lorsque l'ensemble des PID du groupe change.
+function syncProcDetail(processes) {
+    const panel = document.getElementById("proc-detail");
+    const body = document.getElementById("proc-body");
+    if (!panel) return;
+    if (!selectedProc) {
+        panel.hidden = true;
+        if (body) body.classList.remove("with-detail");
+        return;
+    }
+    panel.hidden = false;
+    if (body) body.classList.add("with-detail");
+    document.getElementById("pd-title").textContent = selectedProc;
+
+    const item = findProcByName(processes, selectedProc);
+    const setText = (id, txt) => {
+        document.getElementById(id).textContent = txt;
+    };
+
+    if (item) {
+        selectedPids = Array.isArray(item.pids) ? item.pids : [];
+        selectedKillable = !!item.killable;
+        setText("pd-user", item.user || "—");
+        setText("pd-count", String(item.count || selectedPids.length));
+        setText("pd-cpu", `${formatCpu(item.cpu_percent || 0)} cœur · ${formatCpu(item.cpu_percent_system || 0)} machine`);
+        setText("pd-mem", `${formatBytes(item.mem_bytes || 0)} · ${(item.mem_percent || 0).toFixed(1)} %`);
+    } else {
+        // L'application est sortie du top 10 : on garde la sélection mais on
+        // signale que le résumé n'est plus rafraîchi.
+        selectedKillable = false;
+        setText("pd-user", "—");
+        setText("pd-count", "—");
+        setText("pd-cpu", "hors du top 10");
+        setText("pd-mem", "—");
+    }
+
+    // Bouton de terminaison de toute l'application : seulement si « killable ».
+    const actions = document.getElementById("pd-actions");
+    if (item && item.killable && selectedPids.length > 0) {
+        if (!actions.querySelector(".proc-kill")) {
+            const kill = document.createElement("button");
+            kill.type = "button";
+            kill.className = "proc-kill";
+            kill.textContent = "Terminer l'application";
+            kill.addEventListener("click", killSelected);
+            actions.replaceChildren(kill);
+        }
+    } else {
+        actions.replaceChildren();
+    }
+
+    // Recharge l'arbre uniquement quand l'ensemble des PID a changé.
+    const key = selectedPids.join(",");
+    if (key && key !== loadedInstancesKey) {
+        loadedInstancesKey = key;
+        loadInstances(selectedPids);
+    }
+}
+
+// loadInstances récupère le détail par PID du groupe sélectionné et en rend
+// l'arbre (parent → enfants).
+async function loadInstances(pids) {
+    const box = document.getElementById("pd-instances");
+    if (!box) return;
+    box.textContent = "Chargement de l'arbre…";
+    try {
+        const res = await fetch(`/api/processes/detail?pids=${pids.join(",")}`, { cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        renderTree(box, data.instances || []);
+    } catch (err) {
+        box.textContent = `Détails indisponibles : ${err.message}`;
+    }
+}
+
+// renderTree reconstruit la hiérarchie parent → enfants à partir des PID/PPID et
+// la rend, chaque nœud étant indenté selon sa profondeur.
+function renderTree(box, instances) {
+    if (!instances.length) {
+        box.textContent = "Aucun processus actif.";
+        return;
+    }
+    const byPid = new Map(instances.map((d) => [d.pid, d]));
+    const children = new Map();
+    const roots = [];
+    for (const d of instances) {
+        if (byPid.has(d.ppid) && d.ppid !== d.pid) {
+            if (!children.has(d.ppid)) children.set(d.ppid, []);
+            children.get(d.ppid).push(d);
+        } else {
+            roots.push(d);
+        }
+    }
+    const byPidAsc = (a, b) => a.pid - b.pid;
+    roots.sort(byPidAsc);
+    for (const list of children.values()) list.sort(byPidAsc);
+
+    const frag = document.createDocumentFragment();
+    const seen = new Set();
+    const walk = (d, depth) => {
+        if (seen.has(d.pid) || depth > 32) return; // garde-fou anti-cycle
+        seen.add(d.pid);
+        frag.appendChild(buildTreeNode(d, depth, children));
+        for (const c of children.get(d.pid) || []) walk(c, depth + 1);
+    };
+    for (const r of roots) walk(r, 0);
+    box.replaceChildren(frag);
+}
+
+// buildTreeNode construit la ligne d'un processus de l'arbre, avec un bouton de
+// terminaison (ce processus et ses enfants) lorsque le groupe est terminable.
+function buildTreeNode(d, depth, children) {
+    const row = document.createElement("div");
+    row.className = "pd-node";
+    row.style.setProperty("--depth", depth);
+
+    const info = document.createElement("div");
+    info.className = "pd-node-info";
+
+    const head = document.createElement("div");
+    head.className = "pd-node-head";
+    const pid = document.createElement("span");
+    pid.className = "pd-pid";
+    pid.textContent = d.name ? `${d.name}` : `PID ${d.pid}`;
+    pid.title = d.cmdline || "";
+    const meta = document.createElement("span");
+    meta.className = "pd-meta";
+    const started = d.create_time ? `↑ ${formatUptime((Date.now() - d.create_time) / 1000)}` : "";
+    meta.textContent = [
+        `PID ${d.pid}`,
+        formatBytes(d.mem_bytes || 0),
+        d.threads ? `${d.threads} thr` : "",
+        d.status || "",
+        started,
+    ]
+        .filter(Boolean)
+        .join(" · ");
+    head.append(pid, meta);
+    info.append(head);
+
+    row.append(info);
+
+    if (selectedKillable) {
+        const kill = document.createElement("button");
+        kill.type = "button";
+        kill.className = "pd-node-kill";
+        kill.textContent = "✕";
+        kill.title = "Terminer ce processus et ses enfants";
+        kill.addEventListener("click", (e) => {
+            e.stopPropagation();
+            killNode(d, children, kill);
+        });
+        row.append(kill);
+    }
+    return row;
+}
+
+// collectSubtree renvoie le PID d'un nœud et de tous ses descendants.
+function collectSubtree(d, children) {
+    const pids = [d.pid];
+    for (const c of children.get(d.pid) || []) pids.push(...collectSubtree(c, children));
+    return pids;
+}
+
+// killNode termine un processus de l'arbre et ses descendants (après confirmation).
+async function killNode(d, children, btn) {
+    const pids = collectSubtree(d, children);
+    const extra = pids.length - 1;
+    const label =
+        extra > 0
+            ? `« ${d.name || d.pid} » (PID ${d.pid}) et ses ${extra} enfant(s)`
+            : `« ${d.name || d.pid} » (PID ${d.pid})`;
+    if (!window.confirm(`Terminer ${label} ?`)) return;
+
+    if (btn) btn.disabled = true;
+    try {
+        await killPids(pids);
+        // Recharge l'arbre tout de suite : les PID disparus sont ignorés.
+        if (selectedPids.length) loadInstances(selectedPids);
+    } catch (err) {
+        if (btn) {
+            btn.disabled = false;
+            btn.title = `Échec : ${err.message}`;
+        }
+    }
+}
+
+// killSelected termine toute l'application sélectionnée (après confirmation),
+// puis referme le panneau. La liste se rafraîchit au tick suivant.
+async function killSelected() {
+    if (!selectedPids.length) return;
+    const count = selectedPids.length;
+    if (!window.confirm(`Terminer « ${selectedProc} » et ses ${count} processus ?`)) return;
+
+    const btn = document.querySelector("#pd-actions .proc-kill");
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = "Terminaison…";
+    }
+    try {
+        await killPids(selectedPids);
+        selectedProc = null; // referme le panneau ; la liste se met à jour au tick suivant
+        if (lastState) renderProcesses(lastState.system.processes);
+    } catch (err) {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = "Terminer l'application";
+            btn.title = `Échec de la terminaison : ${err.message}`;
+        }
+    }
+}
+
+// killPids envoie une demande de terminaison pour une liste de PID.
+async function killPids(pids) {
+    const res = await fetch("/api/processes/kill", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pids }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+}
+
+// setupProcToggle câble le sélecteur CPU/Mémoire et la fermeture du panneau de
+// détails ; le changement de mode re-rend immédiatement à partir du dernier état.
+function setupProcToggle() {
+    const close = document.getElementById("pd-close");
+    if (close) {
+        close.addEventListener("click", () => {
+            selectedProc = null;
+            if (lastState) renderProcesses(lastState.system.processes);
+        });
+    }
+    const toggle = document.getElementById("proc-toggle");
+    if (!toggle) return;
+    toggle.addEventListener("click", (event) => {
+        const btn = event.target.closest(".seg-btn");
+        if (!btn || btn.classList.contains("active")) return;
+        procMode = btn.dataset.mode === "mem" ? "mem" : "cpu";
+        toggle.querySelectorAll(".seg-btn").forEach((b) => b.classList.toggle("active", b === btn));
+        if (lastState) renderProcesses(lastState.system.processes);
+    });
 }
 
 // formatBytes met en forme un volume d'octets en unités décimales lisibles,
@@ -163,6 +540,7 @@ function pulseStatus() {
 // ({ system, history }).
 function applyState(state) {
     const data = state.system;
+    lastState = state; // mémorisé pour le re-rendu des processus au changement de mode
 
     updateGauge("cpu", data.cpu.used_percent, `${data.cpu.cores} cœurs`, data.cpu.model_name || "CPU");
 
@@ -217,6 +595,8 @@ function applyState(state) {
             hist.map((s) => s.mem),
         );
     }
+
+    renderProcesses(data.processes);
 
     const time = new Date(data.timestamp).toLocaleTimeString("fr-FR");
     goOnline(`À jour · dernière mesure à ${time}`);
@@ -281,6 +661,7 @@ async function showVersion() {
 
 (async () => {
     showVersion(); // non bloquant : en parallèle de la résolution de l'intervalle
+    setupProcToggle();
     const intervalMs = await resolveRefreshMs();
     const footer = document.getElementById("refresh-label");
     if (footer) footer.textContent = `${intervalMs / 1000} s`;

@@ -75,6 +75,15 @@ Trois couches, découplées pour la testabilité :
   sur macOS), la dernière valeur connue est **conservée** plutôt que de publier
   un 0 % trompeur (`cpuBusyPercent` renvoie `moved=false`). Voir le commentaire
   long dans `sysinfo.go`.
+- **Jauge CPU lissée (EMA)** : la fenêtre de mesure est courte (500 ms) et
+  l'occupation instantanée est très bruitée (saute typiquement de 5 % à 20 %
+  d'un relevé à l'autre). `cpuSampler.set` publie donc une **moyenne mobile
+  exponentielle** (`cpuSmoothing` = 0,25, soit ≈ 2 s de constante de temps,
+  proche de la fenêtre de `top`) plutôt que le relevé brut, sinon la jauge tombe
+  souvent sur un creux non représentatif et paraît « trop basse ». Le premier
+  relevé amorce la moyenne sans la lisser (`seeded`). Ne pas remplacer par le
+  relevé brut. La valeur moyenne reste fidèle à `top` (vérifié) ; c'est la
+  variance, pas un biais, qui était en cause.
 - **Comptage CPU Linux** : `cpuAllBusy` retire `Guest`/`GuestNice` du total sous
   Linux uniquement (ils sont déjà inclus dans `User`/`Nice`).
 - **SSE et WriteTimeout** : `handleStream` neutralise le `WriteTimeout` du serveur
@@ -83,9 +92,33 @@ Trois couches, découplées pour la testabilité :
 - **CPU navigateur au repos** : `app.js` évite toute animation continue (pulse
   ponctuel, halo en `box-shadow` plutôt qu'un `drop-shadow` SVG recalculé). Ne
   pas réintroduire d'animations permanentes.
+- **CPU des processus** : `aggregateProcesses` calcule le CPU par **delta** des
+  temps cumulés (le `CPUPercent()` de gopsutil ne donne qu'une moyenne depuis le
+  démarrage). La valeur est un **% d'un cœur** (façon `top`/`htop`, peut dépasser
+  100 % en multi-thread) — ne pas la « normaliser » sur le nombre de cœurs, ce
+  qui écrase les valeurs et ne correspond à aucun moniteur usuel.
+- **Regroupement par application (arbre)** : `aggregateProcesses` rattache chaque
+  processus à son ancêtre de plus haut niveau via `rootAncestor` (remontée des
+  `ppid` jusqu'à un enfant de launchd/pid 1) et somme tout le sous-arbre sous le
+  nom de la racine. Conséquence assumée : un outil lancé depuis un terminal/IDE
+  est comptabilisé sous celui-ci (ex. `claude` sous `zed`). Relevé espacé
+  (`procSampleInterval`, 3 s) car l'énumération est coûteuse.
+- **Terminaison de processus** : `killOwnedProcess` n'envoie SIGTERM qu'aux
+  processus de l'utilisateur courant (revérifié par PID au moment du kill, pas
+  d'après le cache). Ne pas relâcher ce garde-fou.
+- **Carte Processus — sélection & arbre** : la liste se réordonne à chaque relevé.
+  Le front suit l'application sélectionnée **par nom** (`selectedProc`), pas par
+  position, et place la terminaison dans un **panneau latéral** fixe (`.proc-body.with-detail`)
+  — ne pas remettre de bouton de kill par ligne (cible mouvante). Le panneau
+  reconstruit l'**arbre** parent → enfants depuis `/api/processes/detail`
+  (`ppid`/`name`), avec terminaison par nœud (`killNode` → sous-arbre). Rechargé
+  seulement quand l'ensemble des PID du groupe change.
 
 ## Endpoints
 
 `/api/system` (JSON ponctuel), `/api/stream` (SSE `{system, history}`),
 `/api/history`, `/api/config` (`refresh_ms` pour le front), `/api/health`,
-`/api/version`. Détails et exemples de réponses dans le README.
+`/api/version`, `POST /api/processes/kill` (termine des PID — **uniquement** ceux
+de l'utilisateur ayant lancé le serveur ; garde-fou dans `killOwnedProcess`),
+`GET /api/processes/detail?pids=…` (détail par PID, alimente le panneau de
+détails du front). Détails et exemples de réponses dans le README.

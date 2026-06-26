@@ -107,6 +107,39 @@
                         <li><span class="key">Chargement…</span></li>
                     </ul>
                 </div>
+
+                <!-- Processus -->
+                <div class="card card-full">
+                    <div class="card-title">
+                        <span class="icon">📋</span> Processus
+                        <div class="seg" id="proc-toggle" role="group" aria-label="Critère de tri des processus">
+                            <button type="button" class="seg-btn active" data-mode="cpu">CPU</button>
+                            <button type="button" class="seg-btn" data-mode="mem">Mémoire</button>
+                        </div>
+                    </div>
+                    <div class="proc-body" id="proc-body">
+                        <ol class="proc-list" id="proc-list">
+                            <li class="proc-empty">Mesure en cours…</li>
+                        </ol>
+
+                        <!-- Détails du processus sélectionné (rempli par app.js) -->
+                        <div class="proc-detail" id="proc-detail" hidden>
+                            <div class="proc-detail-head">
+                                <span class="proc-detail-title" id="pd-title">—</span>
+                                <button type="button" class="proc-detail-close" id="pd-close" title="Fermer">✕</button>
+                            </div>
+                            <div class="proc-detail-summary">
+                                <div><span class="k">Utilisateur</span><span class="v" id="pd-user">—</span></div>
+                                <div><span class="k">Instances</span><span class="v" id="pd-count">—</span></div>
+                                <div><span class="k">Mémoire</span><span class="v" id="pd-mem">—</span></div>
+                                <div class="wide"><span class="k">CPU</span><span class="v" id="pd-cpu">—</span></div>
+                            </div>
+                            <div class="proc-detail-actions" id="pd-actions"></div>
+                            <div class="proc-detail-tree-label">Arbre des processus</div>
+                            <div class="proc-detail-instances" id="pd-instances"></div>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <footer>
