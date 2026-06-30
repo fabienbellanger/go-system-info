@@ -150,6 +150,14 @@ Dans les exemples ci-dessous, on suppose le binaire installé en
 `C:\Program Files\go-system-info\go-system-info.exe` (Windows), écoutant sur le
 port `8222` avec un rafraîchissement de `3s`. Adaptez chemins, port et compte.
 
+> 💡 **Raccourci (macOS / Linux).** `make install` automatise tout ce qui suit
+> pour le système hôte : compilation, copie du binaire et génération + activation
+> du fichier de service (LaunchAgent sous macOS, unité systemd sous Linux ;
+> ce dernier requiert `sudo make install`). `make uninstall` fait l'inverse.
+> Variables surchargeables : `PREFIX`, `PORT`, `REFRESH`, `LABEL`. Les sections
+> ci-dessous détaillent la procédure manuelle équivalente (et le cas Windows,
+> non couvert par `make`).
+
 ### Linux — `systemd`
 
 Copiez d'abord le binaire et rendez-le exécutable :

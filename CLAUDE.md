@@ -26,6 +26,8 @@ make bench              # benchmarks (go test -bench=. -benchmem)
 make lint               # go fmt ./... + go vet ./...
 make build-all          # binaires Linux/macOS(arm64,amd64)/Windows dans dist/
 make docker-build       # image Docker multi-stage → scratch
+make install            # installe le binaire + le service du système hôte
+make uninstall          # désinstalle binaire + service
 ```
 
 Lancer un seul test :
@@ -38,6 +40,26 @@ go test ./internal/server  -run TestHandleStream -v
 `make lint` ne fait que `go fmt` + `go vet` en local. La CI exécute en plus
 `golangci-lint` (config `.golangci.yml`) — lancer `golangci-lint run` localement
 avant de pousser si l'outil est installé.
+
+### Installation en tant que service
+
+`make install`/`make uninstall` détectent l'OS hôte (`uname -s`) et génèrent le
+fichier de service à la volée (pas de template versionné) :
+
+- **macOS** → LaunchAgent utilisateur dans `~/Library/LaunchAgents/$(LABEL).plist`,
+  chargé via `launchctl bootstrap` (pas de `sudo`).
+- **Linux** → unité systemd `/etc/systemd/system/$(BIN_NAME).service`, activée par
+  `systemctl enable --now` (nécessite `sudo make install` ; le service tourne sous
+  `$SUDO_USER`, pas `root`).
+- **Windows** → non couvert par `make` ; documenté dans le README (NSSM ou
+  Planificateur de tâches), car le binaire n'implémente pas l'interface SCM native.
+
+Le binaire s'arrête proprement sur `SIGINT`/`SIGTERM` (`os.Interrupt` sous
+Windows) — d'où `KillSignal=SIGTERM` côté systemd et l'envoi de `Ctrl+C` côté
+NSSM. **Choix de l'utilisateur du service = périmètre de
+`POST /api/processes/kill`** : `killOwnedProcess` ne tue que les processus du
+compte qui exécute le serveur (cf. README, section « Lancer en tant que
+service »). Variables surchargeables : `PREFIX`, `PORT`, `REFRESH`, `LABEL`.
 
 ## Architecture
 
