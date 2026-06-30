@@ -127,6 +127,190 @@ docker run --rm -p 9090:9090 go-system-info -p 9090 -r 5s
 > Les arguments passés après le nom de l'image sont transmis au binaire
 > (`ENTRYPOINT`), exactement comme en ligne de commande.
 
+## Lancer en tant que service
+
+Le binaire est autonome (interface embarquée, aucune dépendance réseau) et gère
+l'**arrêt gracieux** sur `SIGINT`/`SIGTERM` (`Ctrl+C` sous Windows). Il se prête
+donc bien à un lancement automatique au démarrage de la machine, supervisé par le
+gestionnaire de services natif de chaque système.
+
+> ⚠️ **Périmètre de la terminaison de processus.** L'endpoint
+> `POST /api/processes/kill` ne tue **que les processus de l'utilisateur qui
+> exécute le serveur** (garde-fou `killOwnedProcess`). Le choix de l'utilisateur
+> sous lequel tourne le service a donc un effet direct :
+>
+> - Pour piloter **vos propres** applications depuis l'interface, lancez le
+>   service **sous votre compte** (LaunchAgent macOS, service utilisateur, etc.).
+> - Un service **système** sous un compte dédié (ou `root`/`LocalSystem`) ne
+>   verra/terminera que les processus de **ce** compte. Lancer en `root` permet
+>   de tout terminer — à n'utiliser qu'en connaissance de cause.
+
+Dans les exemples ci-dessous, on suppose le binaire installé en
+`/usr/local/bin/go-system-info` (Unix) ou
+`C:\Program Files\go-system-info\go-system-info.exe` (Windows), écoutant sur le
+port `8222` avec un rafraîchissement de `3s`. Adaptez chemins, port et compte.
+
+### Linux — `systemd`
+
+Copiez d'abord le binaire et rendez-le exécutable :
+
+```bash
+sudo install -m 0755 dist/go-system-info-linux-amd64 /usr/local/bin/go-system-info
+```
+
+Créez ensuite l'unité `/etc/systemd/system/go-system-info.service` :
+
+```ini
+[Unit]
+Description=go-system-info — métriques système (web/API)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/go-system-info -p 8222 -r 3s
+Restart=on-failure
+RestartSec=5
+# Compte dédié pour un service système. Pour piloter vos propres processus
+# depuis l'interface, remplacez par votre identifiant (User=fabien).
+User=gosysinfo
+Group=gosysinfo
+# systemd envoie SIGTERM à l'arrêt → arrêt gracieux géré par le binaire.
+KillSignal=SIGTERM
+TimeoutStopSec=15
+# Durcissement (facultatif mais recommandé pour un service système).
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Activez et démarrez le service :
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now go-system-info.service
+
+# Vérifier / suivre les journaux (slog écrit sur stderr → journald)
+systemctl status go-system-info.service
+journalctl -u go-system-info.service -f
+```
+
+> Pour un **service utilisateur** (sans `sudo`, tourne sous votre session),
+> placez le même fichier dans `~/.config/systemd/user/go-system-info.service`
+> (sans les lignes `User=`/`Group=`) puis lancez
+> `systemctl --user enable --now go-system-info.service`. Ajoutez
+> `loginctl enable-linger $USER` pour qu'il démarre sans session ouverte.
+
+### macOS — `launchd`
+
+Sous macOS, l'interface de terminaison ne ciblant que vos processus, le plus
+utile est un **LaunchAgent** (tourne sous votre compte, démarre à l'ouverture de
+session). Installez le binaire :
+
+```bash
+sudo install -m 0755 dist/go-system-info-darwin-arm64 /usr/local/bin/go-system-info
+```
+
+Créez `~/Library/LaunchAgents/com.fabien.go-system-info.plist` :
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.fabien.go-system-info</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/go-system-info</string>
+        <string>-p</string>
+        <string>8222</string>
+        <string>-r</string>
+        <string>3s</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/go-system-info.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/go-system-info.err.log</string>
+</dict>
+</plist>
+```
+
+Chargez l'agent (syntaxe moderne `bootstrap`) :
+
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.fabien.go-system-info.plist
+launchctl enable gui/$(id -u)/com.fabien.go-system-info
+
+# État / arrêt / déchargement
+launchctl print gui/$(id -u)/com.fabien.go-system-info
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.fabien.go-system-info.plist
+```
+
+> Pour un service **système** démarrant au boot (avant toute session), placez le
+> plist dans `/Library/LaunchDaemons/`, faites-le appartenir à `root:wheel`
+> (`sudo chown root:wheel …`) et chargez-le avec
+> `sudo launchctl bootstrap system …`. Il tournera alors en `root` : la
+> terminaison de processus s'appliquera à l'ensemble du système.
+
+### Windows
+
+Le binaire n'implémente pas l'interface native du *Service Control Manager*
+(SCM) : `sc.exe create` seul ne suffit donc pas. Deux approches éprouvées :
+
+**Option A — Wrapper de service (recommandé) : NSSM ou WinSW.** Ces outils
+enveloppent un exécutable « console » classique en service Windows.
+
+Avec [NSSM](https://nssm.cc/) (PowerShell **administrateur**) :
+
+```powershell
+nssm install go-system-info "C:\Program Files\go-system-info\go-system-info.exe"
+nssm set go-system-info AppParameters "-p 8222 -r 3s"
+nssm set go-system-info Start SERVICE_AUTO_START
+# Arrêt propre : envoyer Ctrl+C (géré par le binaire) plutôt que TerminateProcess
+nssm set go-system-info AppStopMethodConsole 5000
+nssm start go-system-info
+
+# Statut / arrêt / suppression
+nssm status go-system-info
+nssm stop go-system-info
+nssm remove go-system-info confirm
+```
+
+> `AppStopMethodConsole` fait envoyer un événement `Ctrl+C` à l'arrêt, ce que le
+> binaire intercepte (`os.Interrupt`) pour s'arrêter proprement. Sous Windows,
+> `SIGTERM` n'est jamais délivré : ne comptez pas dessus.
+
+**Option B — Planificateur de tâches (sans outil tiers).** Crée une tâche qui
+lance le binaire au démarrage de la machine (ce n'est pas un « vrai » service,
+mais cela suffit pour un lancement automatique). PowerShell **administrateur** :
+
+```powershell
+$action  = New-ScheduledTaskAction -Execute "C:\Program Files\go-system-info\go-system-info.exe" `
+                                    -Argument "-p 8222 -r 3s"
+$trigger = New-ScheduledTaskTrigger -AtStartup
+$principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -RunLevel Highest
+Register-ScheduledTask -TaskName "go-system-info" -Action $action `
+                       -Trigger $trigger -Principal $principal
+
+# Lancer immédiatement / arrêter / supprimer
+Start-ScheduledTask -TaskName "go-system-info"
+Stop-ScheduledTask  -TaskName "go-system-info"
+Unregister-ScheduledTask -TaskName "go-system-info" -Confirm:$false
+```
+
+> Pour piloter vos propres applications depuis l'interface, remplacez
+> `-UserId "SYSTEM"` par votre compte (la terminaison ne vise que les processus
+> de l'utilisateur exécutant le serveur).
+
 ## API REST
 
 ### `GET /api/system`
