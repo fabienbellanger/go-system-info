@@ -14,7 +14,15 @@ IMAGE    := go-system-info
 
 # Installation en tant que service (cf. README, section « Lancer en tant que service »).
 OS          := $(shell uname -s)
+# PREFIX par défaut selon l'OS : macOS installe un LaunchAgent **utilisateur**
+# (sans sudo) → préfixe inscriptible dans le HOME ($HOME/.local, déjà dans le
+# PATH usuel) ; Linux installe un service systemd **système** (avec sudo) →
+# /usr/local. Surchargeable dans les deux cas (ex. make install PREFIX=/opt).
+ifeq ($(OS),Darwin)
+PREFIX      ?= $(HOME)/.local
+else
 PREFIX      ?= /usr/local
+endif
 BINDIR      := $(PREFIX)/bin
 INSTALL_BIN := $(BINDIR)/$(BIN_NAME)
 LABEL       ?= com.fabien.go-system-info
@@ -83,9 +91,11 @@ build:
 	$(CGO) go build -ldflags="$(LDFLAGS)" -o "$(DIST_DIR)/$(BIN_NAME)" $(SRC_DIR)
 
 # Installe le binaire + le fichier de service du système hôte, puis l'active.
-# - macOS : LaunchAgent utilisateur (pas de sudo). Pilote vos propres processus.
-# - Linux : service systemd (nécessite « sudo make install »). Tourne sous
-#   l'utilisateur appelant ($SUDO_USER) pour que la terminaison reste utile.
+# - macOS : LaunchAgent utilisateur (pas de sudo) ; binaire dans $HOME/.local/bin
+#   par défaut. Pilote vos propres processus.
+# - Linux : service systemd (nécessite « sudo make install ») ; binaire dans
+#   /usr/local/bin. Tourne sous l'utilisateur appelant ($SUDO_USER) pour que la
+#   terminaison reste utile.
 # Surchageable : PREFIX, PORT, REFRESH, LABEL.
 install:
 ifeq ($(OS),Darwin)
@@ -97,6 +107,7 @@ else
 endif
 
 install-darwin: build
+	@if [ "$$(id -u)" -eq 0 ]; then echo "Sur macOS, lancez « make install » SANS sudo : le LaunchAgent est installé pour votre session (gui/\$$(id -u))."; exit 1; fi
 	install -d "$(BINDIR)"
 	install -m 0755 "$(DIST_DIR)/$(BIN_NAME)" "$(INSTALL_BIN)"
 	@mkdir -p "$(HOME)/Library/LaunchAgents"

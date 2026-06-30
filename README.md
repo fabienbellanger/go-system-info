@@ -154,11 +154,21 @@ port `8222` avec un rafraîchissement de `3s`. Adaptez chemins, port et compte.
 
 > 💡 **Raccourci (macOS / Linux).** `make install` automatise tout ce qui suit
 > pour le système hôte : compilation, copie du binaire et génération + activation
-> du fichier de service (LaunchAgent sous macOS, unité systemd sous Linux ;
-> ce dernier requiert `sudo make install`). `make uninstall` fait l'inverse.
-> Variables surchargeables : `PREFIX`, `PORT`, `REFRESH`, `LABEL`. Les sections
-> ci-dessous détaillent la procédure manuelle équivalente (et le cas Windows,
-> non couvert par `make`).
+> du fichier de service (LaunchAgent sous macOS, unité systemd sous Linux).
+>
+> - **macOS** : LaunchAgent **utilisateur**, à lancer **sans `sudo`**. Le binaire
+>   va dans `$HOME/.local/bin` (préfixe inscriptible sans droits admin, déjà dans
+>   le `PATH` usuel) — pour viser `/usr/local/bin`, séparez les étapes (voir la
+>   procédure manuelle ci-dessous), car `/usr/local` n'est pas inscriptible et
+>   `sudo make install` installerait le service pour `root` au lieu de votre
+>   session.
+> - **Linux** : service systemd **système**, qui requiert `sudo make install`.
+>   Le binaire va dans `/usr/local/bin`.
+>
+> `make uninstall` fait l'inverse (réutilisez le même `PREFIX` qu'à
+> l'installation). Variables surchargeables : `PREFIX`, `PORT`, `REFRESH`,
+> `LABEL`. Les sections ci-dessous détaillent la procédure manuelle équivalente
+> (et le cas Windows, non couvert par `make`).
 
 ### Linux — `systemd`
 

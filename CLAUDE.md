@@ -47,7 +47,10 @@ avant de pousser si l'outil est installé.
 fichier de service à la volée (pas de template versionné) :
 
 - **macOS** → LaunchAgent utilisateur dans `~/Library/LaunchAgents/$(LABEL).plist`,
-  chargé via `launchctl bootstrap` (pas de `sudo`).
+  chargé via `launchctl bootstrap` (pas de `sudo`). `PREFIX` vaut **`$HOME/.local`
+  par défaut** (`/usr/local` n'est pas inscriptible sans admin, et `sudo`
+  installerait le LaunchAgent pour `root` au lieu de la session — `install-darwin`
+  refuse d'ailleurs de tourner en root).
 - **Linux** → unité systemd `/etc/systemd/system/$(BIN_NAME).service`, activée par
   `systemctl enable --now` (nécessite `sudo make install` ; le service tourne sous
   `$SUDO_USER`, pas `root`).
