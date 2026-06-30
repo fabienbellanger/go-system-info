@@ -1,5 +1,7 @@
 # go-system-info
 
+[![CI](https://github.com/fabienbellanger/go-system-info/actions/workflows/ci.yml/badge.svg)](https://github.com/fabienbellanger/go-system-info/actions/workflows/ci.yml)
+
 Petit serveur web en Go qui expose les informations système de la machine (CPU,
 charge, mémoire vive, disque, réseau, hôte) via une **API REST** et un **flux
 temps réel (Server-Sent Events)**, et les affiche dans une **interface web

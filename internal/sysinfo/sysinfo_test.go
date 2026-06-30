@@ -13,9 +13,6 @@ func TestCollect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Collect() a renvoyé une erreur : %v", err)
 	}
-	if info == nil {
-		t.Fatal("Collect() a renvoyé un Info nil")
-	}
 
 	if info.Timestamp.IsZero() {
 		t.Error("Timestamp ne doit pas être nul")
