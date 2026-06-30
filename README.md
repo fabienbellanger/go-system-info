@@ -273,7 +273,7 @@ launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.fabien.go-system-info.
 
 ### Windows
 
-Le binaire n'implémente pas l'interface native du *Service Control Manager*
+Le binaire n'implémente pas l'interface native du _Service Control Manager_
 (SCM) : `sc.exe create` seul ne suffit donc pas. Deux approches éprouvées :
 
 **Option A — Wrapper de service (recommandé) : NSSM ou WinSW.** Ces outils
@@ -337,71 +337,71 @@ curl http://localhost:8222/api/system
 
 ```json
 {
-  "timestamp": "2026-06-21T22:11:50.700304+02:00",
-  "host": {
-    "hostname": "macbookair",
-    "os": "darwin",
-    "platform": "darwin",
-    "kernel_arch": "arm64",
-    "uptime_seconds": 38029,
-    "go_version": "go1.26.4"
-  },
-  "cpu": {
-    "used_percent": 19.45,
-    "cores": 8,
-    "model_name": "Apple M3"
-  },
-  "load": {
-    "load1": 2.59,
-    "load5": 3.39,
-    "load15": 3.2
-  },
-  "memory": {
-    "used_percent": 82.97,
-    "used_gb": 7.12,
-    "free_gb": 1.46,
-    "total_gb": 8.58
-  },
-  "disk": {
-    "used_percent": 67.05,
-    "used_gb": 164.35,
-    "total_gb": 245.1,
-    "path": "/"
-  },
-  "net": {
-    "recv_bytes_per_sec": 1436.0,
-    "sent_bytes_per_sec": 3315.0,
-    "recv_total_bytes": 594250003,
-    "sent_total_bytes": 96421144
-  },
-  "processes": {
-    "top_cpu": [
-      {
-        "name": "chrome",
-        "count": 8,
-        "user": "fabien",
-        "cpu_percent": 152.4,
-        "cpu_percent_system": 19.05,
-        "mem_percent": 12.4,
-        "mem_bytes": 1064960000,
-        "pids": [101, 102, 103],
-        "killable": true
-      }
-    ],
-    "top_mem": [
-      {
-        "name": "chrome",
-        "count": 8,
-        "user": "fabien",
-        "cpu_percent": 152.4,
-        "cpu_percent_system": 19.05,
-        "mem_percent": 12.4,
-        "mem_bytes": 1064960000,
-        "pids": [101, 102, 103],
-        "killable": true
-      }
-    ]
-  }
+    "timestamp": "2026-06-21T22:11:50.700304+02:00",
+    "host": {
+        "hostname": "macbookair",
+        "os": "darwin",
+        "platform": "darwin",
+        "kernel_arch": "arm64",
+        "uptime_seconds": 38029,
+        "go_version": "go1.26.4"
+    },
+    "cpu": {
+        "used_percent": 19.45,
+        "cores": 8,
+        "model_name": "Apple M3"
+    },
+    "load": {
+        "load1": 2.59,
+        "load5": 3.39,
+        "load15": 3.2
+    },
+    "memory": {
+        "used_percent": 82.97,
+        "used_gb": 7.12,
+        "free_gb": 1.46,
+        "total_gb": 8.58
+    },
+    "disk": {
+        "used_percent": 67.05,
+        "used_gb": 164.35,
+        "total_gb": 245.1,
+        "path": "/"
+    },
+    "net": {
+        "recv_bytes_per_sec": 1436.0,
+        "sent_bytes_per_sec": 3315.0,
+        "recv_total_bytes": 594250003,
+        "sent_total_bytes": 96421144
+    },
+    "processes": {
+        "top_cpu": [
+            {
+                "name": "chrome",
+                "count": 8,
+                "user": "fabien",
+                "cpu_percent": 152.4,
+                "cpu_percent_system": 19.05,
+                "mem_percent": 12.4,
+                "mem_bytes": 1064960000,
+                "pids": [101, 102, 103],
+                "killable": true
+            }
+        ],
+        "top_mem": [
+            {
+                "name": "chrome",
+                "count": 8,
+                "user": "fabien",
+                "cpu_percent": 152.4,
+                "cpu_percent_system": 19.05,
+                "mem_percent": 12.4,
+                "mem_bytes": 1064960000,
+                "pids": [101, 102, 103],
+                "killable": true
+            }
+        ]
+    }
 }
 ```
 
@@ -640,17 +640,17 @@ systeminfo/
 
 ## Routes HTTP
 
-| Méthode | Chemin         | Description                                     |
-| ------- | -------------- | ----------------------------------------------- |
-| `GET`   | `/`            | Interface web (HTML/CSS/JS embarqué)            |
-| `GET`   | `/api/system`  | Informations système au format JSON             |
-| `GET`   | `/api/stream`  | Flux temps réel (SSE) : système + historique    |
-| `GET`   | `/api/history` | Historique CPU/mémoire (sparklines)             |
-| `GET`   | `/api/config`  | Configuration de l'interface (intervalle en ms) |
-| `GET`   | `/api/health`  | Sonde de santé (`{"status":"ok"}`)              |
-| `GET`   | `/api/version` | Version du binaire injectée au build            |
-| `POST`  | `/api/processes/kill` | Termine des processus (SIGTERM, même utilisateur uniquement) |
-| `GET`   | `/api/processes/detail` | Détail par PID (`?pids=…`) du processus sélectionné       |
+| Méthode | Chemin                  | Description                                                  |
+| ------- | ----------------------- | ------------------------------------------------------------ |
+| `GET`   | `/`                     | Interface web (HTML/CSS/JS embarqué)                         |
+| `GET`   | `/api/system`           | Informations système au format JSON                          |
+| `GET`   | `/api/stream`           | Flux temps réel (SSE) : système + historique                 |
+| `GET`   | `/api/history`          | Historique CPU/mémoire (sparklines)                          |
+| `GET`   | `/api/config`           | Configuration de l'interface (intervalle en ms)              |
+| `GET`   | `/api/health`           | Sonde de santé (`{"status":"ok"}`)                           |
+| `GET`   | `/api/version`          | Version du binaire injectée au build                         |
+| `POST`  | `/api/processes/kill`   | Termine des processus (SIGTERM, même utilisateur uniquement) |
+| `GET`   | `/api/processes/detail` | Détail par PID (`?pids=…`) du processus sélectionné          |
 
 ## Qualité, tests et CI
 
