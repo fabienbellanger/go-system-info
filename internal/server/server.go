@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"mime"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -26,14 +28,24 @@ const (
 	writeTimeout    = 15 * time.Second
 	idleTimeout     = 60 * time.Second
 	shutdownTimeout = 10 * time.Second
+
+	// defaultStreamRefresh est un repli défensif pour handleStream si la
+	// configuration porte un intervalle nul ou négatif : time.NewTicker
+	// paniquerait. En usage normal, parseFlags garantit déjà une valeur valide.
+	defaultStreamRefresh = 3 * time.Second
+
+	// heartbeatInterval espace les commentaires SSE de maintien de connexion.
+	heartbeatInterval = 20 * time.Second
 )
 
 // Config rassemble les paramètres d'exécution du serveur.
 type Config struct {
-	Port    int           // Port d'écoute HTTP.
-	Refresh time.Duration // Intervalle de rafraîchissement exposé à l'interface.
-	Static  fs.FS         // Système de fichiers du contenu statique (interface web).
-	Version string        // Version du binaire (injectée au build), exposée via /api/version.
+	Host     string        // Adresse d'écoute ; vide = toutes les interfaces.
+	Port     int           // Port d'écoute HTTP.
+	Refresh  time.Duration // Intervalle de rafraîchissement exposé à l'interface.
+	Static   fs.FS         // Système de fichiers du contenu statique (interface web).
+	Version  string        // Version du binaire (injectée au build), exposée via /api/version.
+	DiskPath string        // Volume à surveiller ; vide = défaut selon l'OS (voir sysinfo).
 }
 
 // systemCollector abstrait la source des métriques système. L'interface permet
@@ -55,23 +67,40 @@ type Server struct {
 
 // New construit un serveur à partir de sa configuration.
 func New(cfg Config) *Server {
-	return &Server{cfg: cfg, collector: sysinfo.NewCollector()}
+	return &Server{cfg: cfg, collector: sysinfo.NewCollector(cfg.DiskPath)}
 }
 
 // Handler assemble les routes et renvoie le gestionnaire HTTP racine,
 // enveloppé par le middleware de journalisation des requêtes.
 func (s *Server) Handler() http.Handler {
+	// Chaque route d'API impose sa méthode via allow (405 sinon). On ne peut pas
+	// s'en remettre aux motifs « GET /… » du ServeMux : le catch-all « / » (fichiers
+	// statiques) matche toutes les méthodes et absorberait la requête (→ 404) avant
+	// que le mux ne produise un 405.
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/system", s.handleSystem)
-	mux.HandleFunc("/api/history", s.handleHistory)
-	mux.HandleFunc("/api/stream", s.handleStream)
-	mux.HandleFunc("/api/config", s.handleConfig)
-	mux.HandleFunc("/api/health", s.handleHealth)
-	mux.HandleFunc("/api/version", s.handleVersion)
-	mux.HandleFunc("/api/processes/kill", s.handleKill)
-	mux.HandleFunc("/api/processes/detail", s.handleDetail)
+	mux.HandleFunc("/api/system", allow(http.MethodGet, s.handleSystem))
+	mux.HandleFunc("/api/history", allow(http.MethodGet, s.handleHistory))
+	mux.HandleFunc("/api/stream", allow(http.MethodGet, s.handleStream))
+	mux.HandleFunc("/api/config", allow(http.MethodGet, s.handleConfig))
+	mux.HandleFunc("/api/health", allow(http.MethodGet, s.handleHealth))
+	mux.HandleFunc("/api/version", allow(http.MethodGet, s.handleVersion))
+	mux.HandleFunc("/api/processes/kill", allow(http.MethodPost, s.handleKill))
+	mux.HandleFunc("/api/processes/detail", allow(http.MethodGet, s.handleDetail))
 	mux.Handle("/", http.FileServer(http.FS(s.cfg.Static)))
 	return logRequests(mux)
+}
+
+// allow restreint un handler à une méthode HTTP (HEAD étant toléré pour GET),
+// répondant 405 avec l'en-tête Allow sinon.
+func allow(method string, h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != method && !(method == http.MethodGet && r.Method == http.MethodHead) {
+			w.Header().Set("Allow", method)
+			http.Error(w, "méthode non autorisée", http.StatusMethodNotAllowed)
+			return
+		}
+		h(w, r)
+	}
 }
 
 // ListenAndServe démarre le serveur HTTP (appel bloquant). Il s'arrête
@@ -85,19 +114,33 @@ func (s *Server) ListenAndServe() error {
 	// instantanées et la charge de mesure reste constante.
 	s.collector.Start(ctx)
 
-	addr := fmt.Sprintf(":%d", s.cfg.Port)
+	// Host vide → « :port » = toutes les interfaces ; sinon « host:port » pour
+	// restreindre l'écoute (ex. 127.0.0.1 pour la seule machine locale).
+	addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
 	srv := &http.Server{
 		Addr:         addr,
 		Handler:      s.Handler(),
 		ReadTimeout:  readTimeout,
 		WriteTimeout: writeTimeout,
 		IdleTimeout:  idleTimeout,
+		// Rattache le contexte de chaque requête au contexte de signal : à la
+		// réception de SIGINT/SIGTERM, les handlers longue durée (le flux SSE, dont
+		// la boucle écoute r.Context().Done()) se terminent aussitôt, au lieu de
+		// faire patienter Shutdown jusqu'à shutdownTimeout puis échouer.
+		BaseContext: func(net.Listener) context.Context { return ctx },
+	}
+
+	// Hôte affiché dans l'URL : « localhost » quand on écoute sur toutes les
+	// interfaces (Host vide), sinon l'adresse effectivement liée.
+	displayHost := s.cfg.Host
+	if displayHost == "" {
+		displayHost = "localhost"
 	}
 
 	errCh := make(chan error, 1)
 	go func() {
 		slog.Info("serveur démarré",
-			"url", fmt.Sprintf("http://localhost%s", addr),
+			"url", fmt.Sprintf("http://%s:%d", displayHost, s.cfg.Port),
 			"refresh", s.cfg.Refresh,
 			"version", s.cfg.Version,
 		)
@@ -140,14 +183,35 @@ type killResult struct {
 	Error string `json:"error,omitempty"`
 }
 
+// Bornes de sécurité de handleKill.
+const (
+	// maxKillPIDs plafonne le nombre de PID traités en une requête.
+	maxKillPIDs = 256
+	// maxKillBody borne la taille du corps accepté (anti-abus mémoire).
+	maxKillBody = 64 << 10 // 64 Kio
+)
+
 // handleKill termine les processus dont les PID sont fournis dans le corps JSON
 // ({"pids":[…]}). La sécurité est déléguée au collecteur, qui refuse tout
 // processus n'appartenant pas à l'utilisateur ayant lancé le serveur.
+//
+// L'endpoint ayant un effet destructeur, il est protégé du CSRF : on exige un
+// Content-Type application/json (qu'une requête « simple » cross-site — la seule
+// qu'un site tiers peut émettre sans preflight CORS — ne peut pas produire) et
+// on refuse toute requête que le navigateur signale explicitement comme
+// cross-site. La restriction « même utilisateur » reste le garde-fou de fond.
 func (s *Server) handleKill(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "méthode non autorisée", http.StatusMethodNotAllowed)
+	// La méthode POST est déjà garantie par le motif de route (405 sinon).
+	if r.Header.Get("Sec-Fetch-Site") == "cross-site" {
+		http.Error(w, "requête cross-site refusée", http.StatusForbidden)
 		return
 	}
+	if !hasJSONContentType(r) {
+		http.Error(w, "Content-Type application/json requis", http.StatusUnsupportedMediaType)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxKillBody)
 	var req struct {
 		PIDs []int32 `json:"pids"`
 	}
@@ -157,6 +221,10 @@ func (s *Server) handleKill(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(req.PIDs) == 0 {
 		http.Error(w, "aucun PID fourni", http.StatusBadRequest)
+		return
+	}
+	if len(req.PIDs) > maxKillPIDs {
+		http.Error(w, "trop de PID fournis", http.StatusBadRequest)
 		return
 	}
 
@@ -170,6 +238,14 @@ func (s *Server) handleKill(w http.ResponseWriter, r *http.Request) {
 		results = append(results, res)
 	}
 	writeJSON(w, map[string]any{"results": results})
+}
+
+// hasJSONContentType indique si l'en-tête Content-Type de la requête a pour type
+// de média application/json (les paramètres comme « ; charset=utf-8 » sont
+// tolérés). C'est le pivot de la protection CSRF de handleKill.
+func hasJSONContentType(r *http.Request) bool {
+	mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	return err == nil && mt == "application/json"
 }
 
 // maxDetailPIDs borne le nombre de PID interrogeables en une requête de détail.
@@ -222,7 +298,6 @@ type streamState struct {
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Connection", "keep-alive")
 
 	rc := http.NewResponseController(w)
 	// Une connexion SSE est longue : on neutralise le WriteTimeout du serveur
@@ -233,17 +308,40 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	ticker := time.NewTicker(s.cfg.Refresh)
+	refresh := s.cfg.Refresh
+	if refresh <= 0 {
+		// Repli défensif : NewTicker panique pour une durée ≤ 0. parseFlags
+		// écarte déjà ce cas, mais un Server construit directement pourrait ne pas.
+		refresh = defaultStreamRefresh
+	}
+	ticker := time.NewTicker(refresh)
 	defer ticker.Stop()
 
+	// Battement de cœur indépendant : un commentaire SSE périodique garde la
+	// connexion chaude derrière un proxy à timeout d'inactivité court quand
+	// l'intervalle de données est long, sans polluer les événements.
+	beat := time.NewTicker(heartbeatInterval)
+	defer beat.Stop()
+
+	// Premier événement immédiat, puis à chaque battement de l'un ou l'autre.
+	if err := s.writeStreamEvent(w, rc); err != nil {
+		return // client déconnecté ou erreur d'écriture/collecte
+	}
 	for {
-		if err := s.writeStreamEvent(w, rc); err != nil {
-			return // client déconnecté ou erreur d'écriture/collecte
-		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if err := s.writeStreamEvent(w, rc); err != nil {
+				return
+			}
+		case <-beat.C:
+			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
+				return
+			}
+			if err := rc.Flush(); err != nil {
+				return
+			}
 		}
 	}
 }

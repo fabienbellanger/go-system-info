@@ -78,15 +78,28 @@ une autre machine et l'exécuter sans dépendances supplémentaires.
 
 ### Options de ligne de commande
 
-| Option | Description                                              | Défaut |
-| ------ | -------------------------------------------------------- | ------ |
-| `-p`   | Port d'écoute du serveur HTTP                            | `8222` |
-| `-r`   | Intervalle de rafraîchissement de l'interface (durée Go) | `3s`   |
-| `-h`   | Affiche l'aide                                           |        |
+| Option  | Description                                              | Défaut                   |
+| ------- | -------------------------------------------------------- | ------------------------ |
+| `-p`    | Port d'écoute du serveur HTTP (1–65535)                  | `8222`                   |
+| `-r`    | Intervalle de rafraîchissement de l'interface (durée Go) | `3s`                     |
+| `-d`    | Chemin du volume à surveiller                            | `/` (`C:\` sous Windows) |
+| `-host` | Adresse d'écoute (vide = toutes les interfaces)          | _(toutes)_               |
+| `-h`    | Affiche l'aide                                           |                          |
 
 > L'option `-r` accepte une durée au format Go : `500ms`, `5s`, `30s`, `1m`, etc.
 > Elle pilote la fréquence d'actualisation de l'interface web (le serveur expose
-> cette valeur via l'endpoint `/api/config`).
+> cette valeur via l'endpoint `/api/config`). Le minimum accepté est `250ms` ;
+> une valeur nulle ou plus courte est refusée au démarrage.
+
+> L'option `-host` restreint l'adresse d'écoute. Par défaut, le serveur écoute
+> sur **toutes les interfaces** (accessible depuis le réseau local, pratique pour
+> Docker) ; `-host 127.0.0.1` le limite à la **machine locale** — recommandé si
+> vous n'avez pas besoin d'un accès distant, l'endpoint de terminaison ayant un
+> effet destructeur.
+
+> L'option `-d` choisit le volume dont l'occupation est affichée. Par défaut, la
+> racine du système de fichiers (`/`, ou `C:\` sous Windows). Exemple :
+> `-d /System/Volumes/Data` sous macOS, `-d D:\` sous Windows.
 
 ```bash
 # Port personnalisé
@@ -347,71 +360,71 @@ curl http://localhost:8222/api/system
 
 ```json
 {
-    "timestamp": "2026-06-21T22:11:50.700304+02:00",
-    "host": {
-        "hostname": "macbookair",
-        "os": "darwin",
-        "platform": "darwin",
-        "kernel_arch": "arm64",
-        "uptime_seconds": 38029,
-        "go_version": "go1.26.4"
-    },
-    "cpu": {
-        "used_percent": 19.45,
-        "cores": 8,
-        "model_name": "Apple M3"
-    },
-    "load": {
-        "load1": 2.59,
-        "load5": 3.39,
-        "load15": 3.2
-    },
-    "memory": {
-        "used_percent": 82.97,
-        "used_gb": 7.12,
-        "free_gb": 1.46,
-        "total_gb": 8.58
-    },
-    "disk": {
-        "used_percent": 67.05,
-        "used_gb": 164.35,
-        "total_gb": 245.1,
-        "path": "/"
-    },
-    "net": {
-        "recv_bytes_per_sec": 1436.0,
-        "sent_bytes_per_sec": 3315.0,
-        "recv_total_bytes": 594250003,
-        "sent_total_bytes": 96421144
-    },
-    "processes": {
-        "top_cpu": [
-            {
-                "name": "chrome",
-                "count": 8,
-                "user": "fabien",
-                "cpu_percent": 152.4,
-                "cpu_percent_system": 19.05,
-                "mem_percent": 12.4,
-                "mem_bytes": 1064960000,
-                "pids": [101, 102, 103],
-                "killable": true
-            }
-        ],
-        "top_mem": [
-            {
-                "name": "chrome",
-                "count": 8,
-                "user": "fabien",
-                "cpu_percent": 152.4,
-                "cpu_percent_system": 19.05,
-                "mem_percent": 12.4,
-                "mem_bytes": 1064960000,
-                "pids": [101, 102, 103],
-                "killable": true
-            }
-        ]
-    }
+  "timestamp": "2026-06-21T22:11:50.700304+02:00",
+  "host": {
+    "hostname": "macbookair",
+    "os": "darwin",
+    "platform": "darwin",
+    "kernel_arch": "arm64",
+    "uptime_seconds": 38029,
+    "go_version": "go1.26.4"
+  },
+  "cpu": {
+    "used_percent": 19.45,
+    "cores": 8,
+    "model_name": "Apple M3"
+  },
+  "load": {
+    "load1": 2.59,
+    "load5": 3.39,
+    "load15": 3.2
+  },
+  "memory": {
+    "used_percent": 82.97,
+    "used_gb": 7.12,
+    "free_gb": 1.46,
+    "total_gb": 8.58
+  },
+  "disk": {
+    "used_percent": 67.05,
+    "used_gb": 164.35,
+    "total_gb": 245.1,
+    "path": "/"
+  },
+  "net": {
+    "recv_bytes_per_sec": 1436.0,
+    "sent_bytes_per_sec": 3315.0,
+    "recv_total_bytes": 594250003,
+    "sent_total_bytes": 96421144
+  },
+  "processes": {
+    "top_cpu": [
+      {
+        "name": "chrome",
+        "count": 8,
+        "user": "fabien",
+        "cpu_percent": 152.4,
+        "cpu_percent_system": 19.05,
+        "mem_percent": 12.4,
+        "mem_bytes": 1064960000,
+        "pids": [101, 102, 103],
+        "killable": true
+      }
+    ],
+    "top_mem": [
+      {
+        "name": "chrome",
+        "count": 8,
+        "user": "fabien",
+        "cpu_percent": 152.4,
+        "cpu_percent_system": 19.05,
+        "mem_percent": 12.4,
+        "mem_bytes": 1064960000,
+        "pids": [101, 102, 103],
+        "killable": true
+      }
+    ]
+  }
 }
 ```
 

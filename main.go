@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 	"flag"
+	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -18,6 +19,12 @@ const (
 
 	// defaultRefreshInterval est l'intervalle de rafraîchissement par défaut.
 	defaultRefreshInterval = 3 * time.Second
+
+	// minRefreshInterval borne l'intervalle de rafraîchissement. En deçà, la
+	// collecte et la sérialisation tourneraient en boucle trop serrée pour un
+	// gain d'affichage nul ; surtout, time.NewTicker (utilisé par le flux SSE)
+	// panique pour une durée ≤ 0. La borne rend cette valeur toujours valide.
+	minRefreshInterval = 250 * time.Millisecond
 )
 
 // publicFS embarque l'interface web dans le binaire.
@@ -59,12 +66,35 @@ func parseFlags(name string, args []string, out io.Writer) (server.Config, error
 	flags.SetOutput(out)
 
 	var cfg server.Config
+	flags.StringVar(&cfg.Host, "host", "",
+		"Adresse d'écoute (ex. 127.0.0.1 pour la seule machine locale ; vide = toutes les interfaces)")
 	flags.IntVar(&cfg.Port, "p", defaultPort, "Port d'écoute du serveur HTTP")
 	flags.DurationVar(&cfg.Refresh, "r", defaultRefreshInterval,
 		"Intervalle de rafraîchissement de l'interface (ex. 5s, 30s, 1m)")
+	flags.StringVar(&cfg.DiskPath, "d", "",
+		"Chemin du volume à surveiller (défaut : / sous Unix, C:\\ sous Windows)")
 
 	if err := flags.Parse(args); err != nil {
 		return server.Config{}, err
 	}
+
+	// Validation : une configuration invalide doit échouer au démarrage plutôt
+	// que de provoquer un comportement dégradé (ex. panique de time.NewTicker
+	// sur un intervalle nul, cf. flux SSE) ou une adresse d'écoute absurde.
+	if cfg.Port < 1 || cfg.Port > 65535 {
+		return server.Config{}, reportErr(out,
+			fmt.Errorf("port invalide : %d (attendu entre 1 et 65535)", cfg.Port))
+	}
+	if cfg.Refresh < minRefreshInterval {
+		return server.Config{}, reportErr(out,
+			fmt.Errorf("intervalle de rafraîchissement invalide : %s (minimum %s)", cfg.Refresh, minRefreshInterval))
+	}
 	return cfg, nil
+}
+
+// reportErr écrit err sur out (comme le fait flag pour ses propres erreurs) puis
+// la renvoie, afin que l'utilisateur voie le motif du refus avant l'os.Exit(2).
+func reportErr(out io.Writer, err error) error {
+	fmt.Fprintln(out, err)
+	return err
 }

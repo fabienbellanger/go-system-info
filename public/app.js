@@ -14,7 +14,9 @@ let lastState = null;
 let selectedProc = null;
 let selectedPids = [];
 let selectedKillable = false;
-let loadedInstancesKey = null;
+let loadedInstancesKey = null; // clé des PID chargés avec succès dans le panneau
+let loadingInstancesKey = null; // clé en cours de chargement (évite les requêtes redondantes à chaque tick)
+let instancesGen = 0; // génération courante : ignore les réponses d'une requête devenue obsolète
 
 // Couleur selon le seuil d'utilisation.
 function colorFor(pct) {
@@ -231,27 +233,39 @@ function syncProcDetail(processes) {
         actions.replaceChildren();
     }
 
-    // Recharge l'arbre uniquement quand l'ensemble des PID a changé.
+    // Recharge l'arbre quand l'ensemble des PID a changé — mais pas si ce même
+    // ensemble est déjà en cours de chargement (sinon un fetch repartirait à
+    // chaque tick tant que la réponse n'est pas arrivée).
     const key = selectedPids.join(",");
-    if (key && key !== loadedInstancesKey) {
-        loadedInstancesKey = key;
-        loadInstances(selectedPids);
+    if (key && key !== loadedInstancesKey && key !== loadingInstancesKey) {
+        loadInstances(selectedPids, key);
     }
 }
 
 // loadInstances récupère le détail par PID du groupe sélectionné et en rend
-// l'arbre (parent → enfants).
-async function loadInstances(pids) {
+// l'arbre (parent → enfants). La clé n'est mémorisée qu'en cas de succès (un
+// échec pourra donc être retenté), et un jeton de génération écarte la réponse
+// d'une requête supplantée par une sélection plus récente.
+async function loadInstances(pids, key) {
     const box = document.getElementById("pd-instances");
     if (!box) return;
+    const gen = ++instancesGen;
+    loadingInstancesKey = key;
     box.textContent = "Chargement de l'arbre…";
     try {
         const res = await fetch(`/api/processes/detail?pids=${pids.join(",")}`, { cache: "no-store" });
+        if (gen !== instancesGen) return; // supplantée par une requête plus récente
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
+        if (gen !== instancesGen) return;
         renderTree(box, data.instances || []);
+        loadedInstancesKey = key;
     } catch (err) {
+        if (gen !== instancesGen) return;
+        loadedInstancesKey = null; // échec : autorise une nouvelle tentative
         box.textContent = `Détails indisponibles : ${err.message}`;
+    } finally {
+        if (gen === instancesGen) loadingInstancesKey = null;
     }
 }
 
@@ -357,8 +371,12 @@ async function killNode(d, children, btn) {
     if (btn) btn.disabled = true;
     try {
         await killPids(pids);
-        // Recharge l'arbre tout de suite : les PID disparus sont ignorés.
-        if (selectedPids.length) loadInstances(selectedPids);
+        // Recharge l'arbre tout de suite : les PID disparus sont ignorés. On force
+        // le rechargement car l'ensemble des PID (donc la clé) n'a pas changé.
+        if (selectedPids.length) {
+            loadedInstancesKey = null;
+            loadInstances(selectedPids, selectedPids.join(","));
+        }
     } catch (err) {
         if (btn) {
             btn.disabled = false;
@@ -392,7 +410,10 @@ async function killSelected() {
     }
 }
 
-// killPids envoie une demande de terminaison pour une liste de PID.
+// killPids demande la terminaison d'une liste de PID. Le serveur répond 200 même
+// quand des terminaisons échouent (le détail est dans results[]) : on inspecte
+// donc les résultats et on lève une erreur si AUCUNE n'a abouti, afin que
+// l'appelant ne traite pas un échec total comme un succès.
 async function killPids(pids) {
     const res = await fetch("/api/processes/kill", {
         method: "POST",
@@ -400,7 +421,13 @@ async function killPids(pids) {
         body: JSON.stringify({ pids }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return res.json();
+    const data = await res.json();
+    const results = Array.isArray(data.results) ? data.results : [];
+    const failures = results.filter((r) => !r.ok);
+    if (results.length > 0 && failures.length === results.length) {
+        throw new Error(failures[0].error || "terminaison refusée");
+    }
+    return { results, failures };
 }
 
 // setupProcToggle câble le sélecteur CPU/Mémoire et la fermeture du panneau de
@@ -536,6 +563,23 @@ function pulseStatus() {
     dot.classList.add("pulse");
 }
 
+// buildHostRow construit une ligne clé/valeur de la carte Hôte. `value` est soit
+// une chaîne (insérée via textContent, donc sûre vis-à-vis des valeurs système),
+// soit un nœud déjà construit. `title` alimente l'infobulle éventuelle.
+function buildHostRow(key, value, title) {
+    const li = document.createElement("li");
+    if (title) li.title = title;
+    const k = document.createElement("span");
+    k.className = "key";
+    k.textContent = key;
+    const v = document.createElement("span");
+    v.className = "val";
+    if (value instanceof Node) v.appendChild(value);
+    else v.textContent = value;
+    li.append(k, v);
+    return li;
+}
+
 // applyState met à jour l'interface à partir d'un état poussé par le flux SSE
 // ({ system, history }).
 function applyState(state) {
@@ -551,11 +595,17 @@ function applyState(state) {
         `${data.memory.free_gb.toFixed(1)} Go libres`,
     );
 
+    // La note sur l'espace « purgeable » (snapshots Time Machine, caches
+    // récupérables) est propre à macOS : on ne l'affiche que sur cette plateforme.
+    const diskSub =
+        data.host && data.host.os === "darwin"
+            ? `Montage ${data.disk.path}<span class="note" title="L'espace purgeable (snapshots Time Machine locaux, caches récupérables automatiquement par macOS) n'est pas compté comme disponible ici, contrairement au Finder ou à CleanMyMac. La valeur reflète l'espace réellement libre au sens du système de fichiers.">ℹ️ Espace purgeable non inclus</span>`
+            : `Montage ${data.disk.path}`;
     updateGauge(
         "disk",
         data.disk.used_percent,
         `${(data.disk.total_gb - data.disk.used_gb).toFixed(0)} / ${data.disk.total_gb.toFixed(0)} Go restant`,
-        `Montage ${data.disk.path}<span class="note" title="L'espace purgeable (snapshots Time Machine locaux, caches récupérables automatiquement par macOS) n'est pas compté comme disponible ici, contrairement au Finder ou à CleanMyMac. La valeur reflète l'espace réellement libre au sens du système de fichiers.">ℹ️ Espace purgeable non inclus</span>`,
+        diskSub,
     );
 
     const net = data.net || {};
@@ -566,23 +616,35 @@ function applyState(state) {
 
     const host = data.host;
     const cores = data.cpu.cores;
-    // Charge : on affiche le triplet 1/5/15 min, suivi d'un repère « · N cœurs »
-    // pour situer la valeur, et une infobulle explique la lecture.
-    const loadText = data.load
-        ? `${formatLoad(data.load)}<span class="ref">· ${cores} cœurs</span>`
-        : "—";
+    // Charge : le triplet 1/5/15 min, suivi d'un repère « · N cœurs » pour situer
+    // la valeur ; une infobulle explique la lecture.
     const loadTitle =
         `Charge système moyenne (load average) sur 1, 5 et 15 min : nombre moyen de processus ` +
         `actifs ou en attente du CPU. À comparer aux ${cores} cœurs — en dessous il reste de la ` +
         `marge, au-dessus le système est surchargé. Ce n'est pas un pourcentage CPU.`;
-    document.getElementById("host-list").innerHTML = `
-      <li><span class="key">🏠 Nom</span><span class="val">${host.hostname || "—"}</span></li>
-      <li><span class="key">🖥️ Système</span><span class="val">${host.platform || host.os || "—"}</span></li>
-      <li><span class="key">🏗️ Architecture</span><span class="val">${host.kernel_arch || "—"}</span></li>
-      <li title="${loadTitle}"><span class="key">📈 Charge</span><span class="val">${loadText}</span></li>
-      <li><span class="key">⏱️ Uptime</span><span class="val">${formatUptime(host.uptime_seconds)}</span></li>
-      <li><span class="key">🐹 Go</span><span class="val">${host.go_version || "—"}</span></li>
-    `;
+
+    let loadValue;
+    if (data.load) {
+        loadValue = document.createElement("span");
+        loadValue.append(formatLoad(data.load)); // texte, puis le repère « · N cœurs »
+        const ref = document.createElement("span");
+        ref.className = "ref";
+        ref.textContent = `· ${cores} cœurs`;
+        loadValue.append(ref);
+    } else {
+        loadValue = "—";
+    }
+
+    // Les champs hôte proviennent du système : insérés comme texte (jamais comme
+    // HTML), à l'image du reste de l'interface, pour écarter toute injection.
+    document.getElementById("host-list").replaceChildren(
+        buildHostRow("🏠 Nom", host.hostname || "—"),
+        buildHostRow("🖥️ Système", host.platform || host.os || "—"),
+        buildHostRow("🏗️ Architecture", host.kernel_arch || "—"),
+        buildHostRow("📈 Charge", loadValue, loadTitle),
+        buildHostRow("⏱️ Uptime", formatUptime(host.uptime_seconds)),
+        buildHostRow("🐹 Go", host.go_version || "—"),
+    );
 
     const hist = state.history;
     if (Array.isArray(hist) && hist.length > 0) {

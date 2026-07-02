@@ -7,8 +7,10 @@ import (
 	"os/user"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/shirou/gopsutil/v4/cpu"
@@ -63,7 +65,7 @@ type Info struct {
 type ProcessInfo struct {
 	Name       string  `json:"name"`
 	Count      int     `json:"count"`       // nombre d'instances fusionnées
-	User       string  `json:"user"`        // propriétaire (vide si instances de comptes différents)
+	User       string  `json:"user"`        // propriétaire de la racine du groupe (cf. Killable pour l'homogénéité du sous-arbre)
 	CPUPercent float64 `json:"cpu_percent"` // % d'un cœur (style top/htop) ; peut dépasser 100 %
 	// CPUPercentSystem est la même charge rapportée à la machine entière (CPUPercent
 	// / nombre de cœurs) : sur la même base que la jauge CPU globale (0–100 %), la
@@ -171,7 +173,7 @@ func collect(cpuUsed float64, netRate Net) (*Info, error) {
 	if err := info.collectMemory(); err != nil {
 		return nil, err
 	}
-	if err := info.collectDisk("/"); err != nil {
+	if err := info.collectDisk(defaultDiskPath()); err != nil {
 		return nil, err
 	}
 
@@ -187,11 +189,56 @@ type Collector struct {
 	proc        procSampler
 	history     *history
 	currentUser string // propriétaire du serveur, résolu une fois au démarrage
+	diskPath    string // volume surveillé, résolu une fois au démarrage
+
+	// Métadonnées hôte immuables, résolues une fois au démarrage. Les rappeler à
+	// chaque relevé (host.Info/cpu.Info) coûterait des syscalls pour des valeurs
+	// constantes ; seul l'uptime, qui évolue, est relu à chaque Collect.
+	staticHost Host
+	cpuModel   string
+	cpuCores   int
+
+	// lastGood conserve le dernier Info complet réussi : sur défaillance
+	// transitoire d'un relevé (mémoire/disque), Collect le réutilise au lieu de
+	// renvoyer une erreur — ce qui, côté flux SSE, romprait la connexion.
+	lastGood atomic.Pointer[Info]
 }
 
-// NewCollector construit un collecteur prêt à l'emploi.
-func NewCollector() *Collector {
-	return &Collector{history: newHistory(historySize), currentUser: currentUsername()}
+// NewCollector construit un collecteur prêt à l'emploi. diskPath choisit le
+// volume surveillé ; vide, il retombe sur le défaut de l'OS (defaultDiskPath).
+func NewCollector(diskPath string) *Collector {
+	if diskPath == "" {
+		diskPath = defaultDiskPath()
+	}
+	c := &Collector{
+		history:     newHistory(historySize),
+		currentUser: currentUsername(),
+		diskPath:    diskPath,
+		cpuCores:    runtime.NumCPU(),
+		staticHost:  Host{GoVersion: runtime.Version()},
+	}
+	// Best-effort : en cas d'échec, les champs restent vides — comme le reste du
+	// code tolère déjà l'indisponibilité du modèle CPU ou de la charge moyenne.
+	if h, err := host.Info(); err == nil {
+		c.staticHost.Hostname = h.Hostname
+		c.staticHost.OS = h.OS
+		c.staticHost.Platform = h.Platform
+		c.staticHost.KernelArch = h.KernelArch
+	}
+	if infos, err := cpu.Info(); err == nil && len(infos) > 0 {
+		c.cpuModel = infos[0].ModelName
+	}
+	return c
+}
+
+// defaultDiskPath renvoie le volume surveillé par défaut selon l'OS : la racine
+// Unix « / », ou « C:\ » sous Windows où « / » ne désigne pas une racine de
+// volume valide.
+func defaultDiskPath() string {
+	if runtime.GOOS == "windows" {
+		return `C:\`
+	}
+	return "/"
 }
 
 // Start lance, en arrière-plan et jusqu'à l'annulation de ctx, l'échantillonnage
@@ -204,11 +251,45 @@ func (c *Collector) Start(ctx context.Context) {
 	go c.recordHistory(ctx)
 }
 
-// Collect renvoie les métriques courantes en réutilisant les dernières mesures
-// CPU et réseau mises en cache (aucun appel bloquant).
+// Collect renvoie les métriques courantes en réutilisant les mesures CPU, réseau
+// et processus déjà échantillonnées en arrière-plan (aucun appel bloquant), et
+// les métadonnées hôte mises en cache. Sur défaillance transitoire d'un relevé
+// dynamique, il retombe sur le dernier état complet connu.
 func (c *Collector) Collect() (*Info, error) {
-	info, err := collect(c.cpu.get(), c.net.get())
+	info, err := c.assemble()
 	if err != nil {
+		// On a déjà servi un état complet : on le réémet plutôt que d'échouer.
+		// Son horodatage (plus ancien) reflète honnêtement la fraîcheur réelle.
+		if last := c.lastGood.Load(); last != nil {
+			return last, nil
+		}
+		return nil, err
+	}
+	c.lastGood.Store(info)
+	return info, nil
+}
+
+// assemble construit l'état courant à partir des métadonnées mises en cache
+// (hôte, modèle CPU) et des relevés dynamiques : CPU/réseau/processus déjà
+// échantillonnés en tâche de fond, uptime/charge/mémoire/disque lus ici. Renvoie
+// une erreur si un relevé essentiel (mémoire ou disque) échoue.
+func (c *Collector) assemble() (*Info, error) {
+	info := &Info{
+		Timestamp: time.Now(),
+		Net:       c.net.get(),
+		Host:      c.staticHost,
+		CPU:       CPU{UsedPercent: c.cpu.get(), Cores: c.cpuCores, ModelName: c.cpuModel},
+	}
+	// L'uptime est la seule donnée hôte qui évolue : relevé seul (plus léger que
+	// host.Info) à chaque collecte.
+	if up, err := host.Uptime(); err == nil {
+		info.Host.UptimeSeconds = up
+	}
+	info.collectLoad()
+	if err := info.collectMemory(); err != nil {
+		return nil, err
+	}
+	if err := info.collectDisk(c.diskPath); err != nil {
 		return nil, err
 	}
 	info.Processes = c.proc.get()
@@ -598,7 +679,10 @@ func (s *procSampler) set(p *Processes) {
 // classements jusqu'à l'annulation de ctx. Le relevé précédent (prev) reste
 // local à la goroutine : aucun verrou n'est nécessaire pour le manipuler.
 func (s *procSampler) run(ctx context.Context, currentUser string) {
-	prev, prevAt := readProcs(), time.Now()
+	// Cache uid → nom d'utilisateur, propre à cette goroutine (pas de verrou),
+	// partagé entre tous les relevés pour ne résoudre chaque uid qu'une fois.
+	users := make(usernameCache)
+	prev, prevAt := readProcs(users), time.Now()
 
 	ticker := time.NewTicker(procSampleInterval)
 	defer ticker.Stop()
@@ -608,7 +692,7 @@ func (s *procSampler) run(ctx context.Context, currentUser string) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			cur, curAt := readProcs(), time.Now()
+			cur, curAt := readProcs(users), time.Now()
 			elapsed := curAt.Sub(prevAt).Seconds()
 			if elapsed <= 0 {
 				continue
@@ -634,10 +718,42 @@ type procSample struct {
 	rss     uint64  // mémoire résidente (octets)
 }
 
+// usernameCache mémoïse la résolution uid → nom d'utilisateur sur la durée de
+// vie du sampler. Sur une machine, quelques uid seulement possèdent la plupart
+// des processus : le cache évite autant d'appels à user.LookupId (lecture de la
+// base passwd) à chaque relevé. Il est propre à la goroutine du sampler, donc
+// sans verrou.
+type usernameCache map[uint32]string
+
+// resolve renvoie le propriétaire d'un processus. Sous Windows, le propriétaire
+// se résout par jeton/SID (pas d'uid numérique) : on délègue à Username sans
+// mise en cache. Ailleurs (POSIX), Username revient déjà à Uids + LookupId ; on
+// fait donc l'Uids nous-mêmes et on met le nom en cache par uid.
+func (c usernameCache) resolve(p *process.Process) string {
+	if runtime.GOOS == "windows" {
+		name, _ := p.Username()
+		return name
+	}
+	uids, err := p.Uids()
+	if err != nil || len(uids) == 0 {
+		return ""
+	}
+	uid := uids[0]
+	if name, ok := c[uid]; ok {
+		return name
+	}
+	name := ""
+	if u, err := user.LookupId(strconv.FormatUint(uint64(uid), 10)); err == nil {
+		name = u.Username
+	}
+	c[uid] = name
+	return name
+}
+
 // readProcs énumère les processus et relève, pour chacun, son nom, son parent,
 // son propriétaire, son temps CPU cumulé et sa mémoire résidente. Les processus
 // disparus en cours de lecture (ou inaccessibles) sont silencieusement ignorés.
-func readProcs() []procSample {
+func readProcs(users usernameCache) []procSample {
 	procs, err := process.Processes()
 	if err != nil {
 		return nil
@@ -660,7 +776,7 @@ func readProcs() []procSample {
 		ppid, _ := p.Ppid()
 		// Le propriétaire est optionnel : indisponible pour certains processus
 		// système, on le laisse alors vide (le groupe ne sera pas « killable »).
-		user, _ := p.Username()
+		user := users.resolve(p)
 		samples = append(samples, procSample{
 			pid:  p.Pid,
 			ppid: ppid,

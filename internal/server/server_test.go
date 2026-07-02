@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -127,6 +128,7 @@ func TestHandleKill(t *testing.T) {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, "/api/processes/kill",
 			strings.NewReader(`{"pids":[42,43]}`))
+		req.Header.Set("Content-Type", "application/json")
 
 		srv.Handler().ServeHTTP(rec, req)
 
@@ -158,6 +160,7 @@ func TestHandleKill(t *testing.T) {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, "/api/processes/kill",
 			strings.NewReader(`{"pids":[1]}`))
+		req.Header.Set("Content-Type", "application/json")
 
 		srv.Handler().ServeHTTP(rec, req)
 
@@ -186,6 +189,72 @@ func TestHandleKill(t *testing.T) {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, "/api/processes/kill",
 			strings.NewReader(`{"pids":[]}`))
+		req.Header.Set("Content-Type", "application/json")
+
+		srv.Handler().ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("code = %d, attendu %d", rec.Code, http.StatusBadRequest)
+		}
+	})
+
+	t.Run("Content-Type non JSON refusé (anti-CSRF)", func(t *testing.T) {
+		srv := &Server{
+			cfg:       Config{Static: fstest.MapFS{}},
+			collector: stubCollector{},
+		}
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/processes/kill",
+			strings.NewReader(`{"pids":[42]}`))
+		req.Header.Set("Content-Type", "text/plain")
+
+		srv.Handler().ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusUnsupportedMediaType {
+			t.Fatalf("code = %d, attendu %d", rec.Code, http.StatusUnsupportedMediaType)
+		}
+	})
+
+	t.Run("requête cross-site refusée (anti-CSRF)", func(t *testing.T) {
+		var killed []int32
+		srv := &Server{
+			cfg:       Config{Static: fstest.MapFS{}},
+			collector: stubCollector{killed: &killed},
+		}
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/processes/kill",
+			strings.NewReader(`{"pids":[42]}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Sec-Fetch-Site", "cross-site")
+
+		srv.Handler().ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("code = %d, attendu %d", rec.Code, http.StatusForbidden)
+		}
+		if len(killed) != 0 {
+			t.Errorf("aucun PID ne doit être terminé, obtenu %v", killed)
+		}
+	})
+
+	t.Run("trop de PID refusés", func(t *testing.T) {
+		srv := &Server{
+			cfg:       Config{Static: fstest.MapFS{}},
+			collector: stubCollector{},
+		}
+		var sb strings.Builder
+		sb.WriteString(`{"pids":[`)
+		for i := 0; i <= maxKillPIDs; i++ {
+			if i > 0 {
+				sb.WriteByte(',')
+			}
+			sb.WriteString(strconv.Itoa(i + 1))
+		}
+		sb.WriteString(`]}`)
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/processes/kill",
+			strings.NewReader(sb.String()))
+		req.Header.Set("Content-Type", "application/json")
 
 		srv.Handler().ServeHTTP(rec, req)
 
@@ -391,6 +460,21 @@ func TestServeStaticIndex(t *testing.T) {
 	}
 	if got := rec.Body.String(); got != "<h1>OK</h1>" {
 		t.Errorf("corps = %q, attendu le contenu de index.html", got)
+	}
+}
+
+func TestMethodNotAllowedOnGetEndpoint(t *testing.T) {
+	srv := newTestServer(time.Second)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/system", nil)
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("code = %d, attendu %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+	if allow := rec.Header().Get("Allow"); allow != http.MethodGet {
+		t.Errorf("en-tête Allow = %q, attendu %q", allow, http.MethodGet)
 	}
 }
 

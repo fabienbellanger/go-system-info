@@ -61,6 +61,48 @@ func assertPercent(t *testing.T, name string, v float64) {
 	}
 }
 
+func TestDefaultDiskPath(t *testing.T) {
+	want := "/"
+	if runtime.GOOS == "windows" {
+		want = `C:\`
+	}
+	if got := defaultDiskPath(); got != want {
+		t.Errorf("defaultDiskPath() = %q, attendu %q", got, want)
+	}
+}
+
+func TestNewCollectorDiskPath(t *testing.T) {
+	if c := NewCollector("/data"); c.diskPath != "/data" {
+		t.Errorf("diskPath = %q, attendu \"/data\"", c.diskPath)
+	}
+	// Chemin vide → défaut de l'OS.
+	if c := NewCollector(""); c.diskPath != defaultDiskPath() {
+		t.Errorf("diskPath (vide) = %q, attendu %q", c.diskPath, defaultDiskPath())
+	}
+}
+
+// TestCollectorCollect vérifie l'assemblage via le Collector : métadonnées mises
+// en cache (hôte, cœurs) et relevés dynamiques (mémoire, disque au chemin voulu).
+func TestCollectorCollect(t *testing.T) {
+	c := NewCollector("")
+	info, err := c.Collect()
+	if err != nil {
+		t.Fatalf("Collect() a renvoyé une erreur : %v", err)
+	}
+	if info.CPU.Cores != runtime.NumCPU() {
+		t.Errorf("CPU.Cores = %d, attendu %d", info.CPU.Cores, runtime.NumCPU())
+	}
+	if info.Host.GoVersion != runtime.Version() {
+		t.Errorf("Host.GoVersion = %q, attendu %q", info.Host.GoVersion, runtime.Version())
+	}
+	if info.Disk.Path != defaultDiskPath() {
+		t.Errorf("Disk.Path = %q, attendu %q", info.Disk.Path, defaultDiskPath())
+	}
+	if info.Memory.TotalGB <= 0 {
+		t.Errorf("Memory.TotalGB = %f, doit être > 0", info.Memory.TotalGB)
+	}
+}
+
 // BenchmarkCollect mesure l'assemblage d'un Info à partir de valeurs déjà
 // échantillonnées — c'est le coût réel d'une requête GET /api/system servie
 // par le Collector (lectures hôte/CPU/mémoire/disque, sans mesure CPU bloquante).
