@@ -62,6 +62,15 @@
     padding: 0;
 }
 
+/* L'attribut HTML `hidden` doit toujours masquer l'élément. Sans cette règle,
+   une déclaration `display:` d'une classe (p. ex. .vol-select ou .version, en
+   display:block) l'emporte sur le `[hidden]{display:none}` de la feuille de
+   style du navigateur (même spécificité, mais l'auteur gagne) — l'élément
+   resterait alors affiché, souvent vide, malgré `el.hidden = true`. */
+[hidden] {
+    display: none !important;
+}
+
 html {
     scroll-behavior: smooth;
 }
@@ -248,6 +257,12 @@ header {
    la moins remplie (Réseau) comble sa hauteur sans paraître vide. */
 .card-gauge {
     grid-column: span 2;
+    /* Cartes-jauges d'une même rangée à hauteur égale (étirées à la plus haute) ;
+       colonne flex pour que le contenu variable (sparkline, cœurs…) puisse
+       occuper la hauteur excédentaire. Les jauges circulaires restent en haut,
+       donc alignées d'une carte à l'autre. */
+    display: flex;
+    flex-direction: column;
 }
 
 .card-wide {
@@ -470,12 +485,11 @@ header {
 }
 
 .detail .note {
-    display: block;
-    font-family: "Inter", sans-serif;
-    font-size: 0.68rem;
-    color: var(--text-faint);
+    /* Icône d'aide inline (infobulle) plutôt qu'une 3ᵉ ligne, pour que le détail
+       de la carte Disque tienne sur 2 lignes comme CPU/RAM → rangée « graphique »
+       alignée d'une carte à l'autre. */
+    margin-left: 0.35rem;
     opacity: 0.7;
-    margin-top: 0.2rem;
     cursor: help;
 }
 
@@ -999,6 +1013,193 @@ header {
     }
 }
 
+/* ---------- CPU : grille par cœur + température ---------- */
+.cpu-cores {
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
+    height: 34px;
+    margin-top: 0.9rem;
+}
+
+.cpu-cores:empty {
+    display: none;
+}
+
+.cpu-core {
+    position: relative;
+    flex: 1 1 0;
+    min-width: 4px;
+    height: 100%;
+    background: var(--track);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.cpu-core-fill {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: block;
+    background: var(--accent); /* couleur posée dynamiquement selon le seuil */
+    transition:
+        height 0.4s ease,
+        background 0.4s ease;
+}
+
+.cpu-temp {
+    margin-top: 0.7rem;
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Infos complémentaires (Swap RAM, FS + E/S disque) ----------
+   Comblent l'espace des cartes RAM/Disque à hauteur de la grille par cœur du
+   CPU, tout en apportant des informations utiles. `margin-top: auto` les colle
+   au bas de la carte (colonne flex) pour aligner les pieds d'une carte à l'autre. */
+.card-extra {
+    /* Ancré en bas de la carte (colonne flex) : les blocs d'infos complémentaires
+       des cartes RAM/Disque s'alignent ainsi sur une même ligne basse, comme la
+       température du CPU, plutôt que de laisser un vide en pied de carte. */
+    margin-top: auto;
+    padding-top: 1rem;
+}
+
+.mini-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.5rem;
+    padding: 0.18rem 0;
+    font-family: var(--mono);
+    font-size: 0.76rem;
+}
+
+.mini-label {
+    color: var(--text-faint);
+}
+
+.mini-val {
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+}
+
+.mini-bar {
+    height: 8px;
+    margin-top: 0.35rem;
+    background: var(--track);
+    border-radius: 5px;
+    overflow: hidden;
+}
+
+.mini-bar-fill {
+    display: block;
+    height: 100%;
+    width: 0;
+    background: var(--accent); /* couleur posée dynamiquement selon le seuil */
+    border-radius: 5px;
+    transition:
+        width 0.5s ease,
+        background 0.5s ease;
+}
+
+/* ---------- Sélecteur de volume (carte Disque) ---------- */
+.vol-select {
+    display: block;
+    width: 100%;
+    margin-top: 0.9rem;
+    padding: 0.35rem 0.55rem;
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--text);
+    background: var(--track);
+    border: 1px solid var(--card-border);
+    border-radius: 8px;
+    cursor: pointer;
+    color-scheme: dark; /* liste déroulante native en thème sombre */
+    transition: border-color 0.2s;
+}
+
+.vol-select:hover {
+    border-color: var(--card-border-hover);
+}
+
+.vol-select:focus-visible {
+    outline: none;
+    border-color: var(--accent);
+}
+
+/* ---------- Barre d'outils Processus (recherche + tri) ---------- */
+.proc-tools {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+}
+
+.proc-search {
+    flex: 1 1 12rem;
+    min-width: 0;
+    padding: 0.4rem 0.7rem;
+    font-family: inherit;
+    font-size: 0.84rem;
+    color: var(--text);
+    background: var(--track);
+    border: 1px solid var(--card-border);
+    border-radius: 8px;
+    color-scheme: dark;
+    transition: border-color 0.2s;
+}
+
+.proc-search::placeholder {
+    color: var(--text-faint);
+}
+
+.proc-search:focus-visible {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.proc-sort {
+    display: inline-flex;
+    gap: 2px;
+    padding: 2px;
+    border: 1px solid var(--card-border);
+    border-radius: 8px;
+    background: var(--track);
+}
+
+.sort-btn {
+    font-family: inherit;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--text-dim);
+    background: transparent;
+    border: none;
+    padding: 0.28rem 0.6rem;
+    border-radius: 6px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition:
+        background 0.25s,
+        color 0.25s;
+}
+
+.sort-btn:hover {
+    color: var(--text);
+}
+
+.sort-btn.active {
+    color: var(--text);
+    background: color-mix(in srgb, var(--accent) 32%, transparent);
+}
+
 /* ---------- État hors ligne (flux rompu : données figées) ---------- */
 /* Les mesures ne sont plus rafraîchies : on désature et on estompe les jauges,
    les sparklines et les valeurs pour signaler sans ambiguïté qu'elles sont
@@ -1016,6 +1217,9 @@ header {
 .offline .detail,
 .offline .sparkline,
 .offline .info-list .val,
+.offline .cpu-cores,
+.offline .cpu-temp,
+.offline .card-extra,
 .offline .proc-list {
     filter: grayscale(0.9);
     opacity: 0.45;

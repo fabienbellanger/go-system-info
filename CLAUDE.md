@@ -78,10 +78,15 @@ Trois couches, découplées pour la testabilité :
   Deux modes :
   - `Collect()` (fonction libre) fait une mesure CPU **bloquante** sur 500 ms —
     pour un relevé ponctuel.
-  - `Collector` (utilisé par le serveur) échantillonne CPU et réseau dans des
-    goroutines d'arrière-plan (`Start(ctx)`) et met les valeurs en cache, de
-    sorte que `Collect()` renvoie **instantanément**. `History()` expose un
-    anneau circulaire thread-safe (~120 points à 1/s, ~2 min) pour les sparklines.
+  - `Collector` (utilisé par le serveur) échantillonne dans des goroutines
+    d'arrière-plan (`Start(ctx)`) et met les valeurs en cache, de sorte que
+    `Collect()` renvoie **instantanément**. Un sampler par métrique, avec sa
+    propre cadence : CPU global (`cpuSampler`), CPU par cœur (`coreSampler`),
+    réseau (`netSampler`, 1 s), **E/S disque** (`diskIOSampler`, 1 s, agrégé
+    toutes unités — même différenciation de compteurs cumulés que le réseau),
+    processus (`procSampler`, 3 s), volumes montés (`diskSampler`, 5 s),
+    température (`tempSampler`, 5 s). `History()` expose un anneau circulaire
+    thread-safe (~120 points à 1/s, ~2 min) pour les sparklines.
 
 - **`internal/server`** — serveur HTTP, routage et sérialisation JSON. Le
   collecteur est injecté derrière l'interface `systemCollector`, ce qui permet
@@ -138,12 +143,40 @@ Trois couches, découplées pour la testabilité :
   reconstruit l'**arbre** parent → enfants depuis `/api/processes/detail`
   (`ppid`/`name`), avec terminaison par nœud (`killNode` → sous-arbre). Rechargé
   seulement quand l'ensemble des PID du groupe change.
+- **Dédup des volumes indépendante de l'ordre** : `selectVolumes` ajoute le volume
+  par défaut **en premier** et pré-enregistre sa signature d'occupation, pour que
+  ses volumes-frères d'un même conteneur APFS (macOS : `/System/Volumes/Data`…)
+  fusionnent vers lui **quel que soit l'ordre** de `disk.Partitions`. Sinon un
+  frère listé avant `/` survivait à la dédup, puis `/` était ajouté en plus (entrée
+  redondante) → le sélecteur de volume apparaissait à tort. Ne pas revenir à une
+  dédup dépendante de l'ordre.
+- **Attribut HTML `hidden` vs `display` CSS** : règle globale
+  `[hidden] { display: none !important }` dans `styles.css`. Sans elle, un
+  `display:block` d'une classe (`.vol-select`, `.version`…) l'emporte sur le
+  `[hidden]{display:none}` du navigateur (même spécificité, l'auteur gagne) et
+  l'élément reste affiché — souvent **vide** — malgré `el.hidden = true`. C'était
+  la cause du sélecteur de volume affiché vide. Ne pas retirer cette règle.
+- **Cache des assets embarqués** : servis avec `Cache-Control: no-cache`
+  (`staticCacheControl` dans `server.go`). `embed.FS` n'expose pas de date de
+  modification, donc `http.FileServer` n'émet ni `Last-Modified` ni `ETag` : sans
+  en-tête, le navigateur applique un cache heuristique et peut resservir un ancien
+  `app.js`/`styles.css` après reconstruction du binaire (bundle désynchronisé).
+- **Cartes-jauges à hauteur égale** : `.card-gauge` est une colonne flex étirée à
+  la hauteur de la plus remplie (CPU, avec sa grille par cœur + température). Pour
+  éviter un vide, les cartes RAM/Disque comblent l'espace avec des infos utiles
+  ancrées en bas (`.card-extra { margin-top: auto }`) : **Swap** (RAM), **système
+  de fichiers + débit d'E/S** (Disque). Jauge en haut → cercles alignés d'une
+  carte à l'autre. Ne pas réintroduire de barre d'occupation disque (jugée
+  redondante avec l'anneau).
 
 ## Endpoints
 
-`/api/system` (JSON ponctuel), `/api/stream` (SSE `{system, history}`),
-`/api/history`, `/api/config` (`refresh_ms` pour le front), `/api/health`,
+`/api/system` (JSON ponctuel — inclut notamment `cpu.per_core`/`cpu.temp_*`,
+`memory.swap_*`, `disk.fstype`, `disk_io` (débit d'E/S agrégé), `disks` (volumes)),
+`/api/stream` (SSE `{system, history}`), `/api/history`,
+`/api/config` (`refresh_ms` et `readonly` pour le front), `/api/health`,
 `/api/version`, `POST /api/processes/kill` (termine des PID — **uniquement** ceux
-de l'utilisateur ayant lancé le serveur ; garde-fou dans `killOwnedProcess`),
-`GET /api/processes/detail?pids=…` (détail par PID, alimente le panneau de
-détails du front). Détails et exemples de réponses dans le README.
+de l'utilisateur ayant lancé le serveur ; garde-fou dans `killOwnedProcess` ;
+`403` si `-readonly`), `GET /api/processes/detail?pids=…` (détail par PID,
+restreint au propriétaire ; alimente le panneau de détails du front). Détails et
+exemples de réponses dans le README.

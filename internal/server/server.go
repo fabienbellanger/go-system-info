@@ -21,6 +21,13 @@ import (
 	"gosysteminfo/internal/sysinfo"
 )
 
+// DefaultRefresh est l'intervalle de rafraîchissement par défaut de l'application,
+// source de vérité unique partagée entre ses deux usages : main l'emploie comme
+// valeur par défaut du flag -r, et handleStream comme repli défensif si la
+// configuration porte un intervalle nul ou négatif (time.NewTicker paniquerait
+// sinon). En usage normal, parseFlags garantit déjà une valeur valide.
+const DefaultRefresh = 3 * time.Second
+
 // Délais appliqués au serveur HTTP pour se prémunir des connexions lentes
 // (type Slowloris) et borner la durée d'arrêt gracieux.
 const (
@@ -28,11 +35,6 @@ const (
 	writeTimeout    = 15 * time.Second
 	idleTimeout     = 60 * time.Second
 	shutdownTimeout = 10 * time.Second
-
-	// defaultStreamRefresh est un repli défensif pour handleStream si la
-	// configuration porte un intervalle nul ou négatif : time.NewTicker
-	// paniquerait. En usage normal, parseFlags garantit déjà une valeur valide.
-	defaultStreamRefresh = 3 * time.Second
 
 	// heartbeatInterval espace les commentaires SSE de maintien de connexion.
 	heartbeatInterval = 20 * time.Second
@@ -46,6 +48,15 @@ type Config struct {
 	Static   fs.FS         // Système de fichiers du contenu statique (interface web).
 	Version  string        // Version du binaire (injectée au build), exposée via /api/version.
 	DiskPath string        // Volume à surveiller ; vide = défaut selon l'OS (voir sysinfo).
+	// ReadOnly désactive la terminaison de processus (POST /api/processes/kill) :
+	// l'interface reste consultable mais ne peut plus agir sur la machine, ce qui
+	// rend défendable une écoute sur toutes les interfaces.
+	ReadOnly bool
+	// TrustedHosts liste, séparés par des virgules, des noms d'hôte de confiance
+	// supplémentaires acceptés dans l'en-tête Host (au-delà de localhost, du nom
+	// de la machine et des adresses IP littérales, toujours admis). Utile derrière
+	// un reverse proxy exposant l'application sous un nom de domaine.
+	TrustedHosts string
 }
 
 // systemCollector abstrait la source des métriques système. L'interface permet
@@ -63,11 +74,47 @@ type systemCollector interface {
 type Server struct {
 	cfg       Config
 	collector systemCollector
+	// allowedHosts est l'ensemble des noms d'hôte acceptés dans l'en-tête Host
+	// (parade au DNS rebinding, cf. checkHost). Résolu une fois par New ; nil
+	// lorsque le Server est construit directement (tests), auquel cas la
+	// vérification est désactivée.
+	allowedHosts map[string]bool
 }
 
 // New construit un serveur à partir de sa configuration.
 func New(cfg Config) *Server {
-	return &Server{cfg: cfg, collector: sysinfo.NewCollector(cfg.DiskPath)}
+	return &Server{
+		cfg:          cfg,
+		collector:    sysinfo.NewCollector(cfg.DiskPath),
+		allowedHosts: allowedHosts(cfg),
+	}
+}
+
+// allowedHosts calcule l'ensemble des valeurs d'en-tête Host acceptées, en plus
+// des adresses IP littérales (toujours admises par hostAllowed). C'est la parade
+// au DNS rebinding : un site tiers qui re-résout son domaine vers 127.0.0.1
+// émettrait un Host de la forme « attaquant.tld », que l'on refuse faute de
+// figurer ici. Les noms sont normalisés en minuscules.
+func allowedHosts(cfg Config) map[string]bool {
+	set := map[string]bool{"localhost": true}
+	if h, err := os.Hostname(); err == nil && h != "" {
+		h = strings.ToLower(h)
+		set[h] = true
+		// macOS/Bonjour expose souvent la machine sous « nom.local ».
+		if !strings.Contains(h, ".") {
+			set[h+".local"] = true
+		}
+	}
+	// Hôte d'écoute explicite (-host) : légitime par construction.
+	if cfg.Host != "" {
+		set[strings.ToLower(cfg.Host)] = true
+	}
+	for h := range strings.SplitSeq(cfg.TrustedHosts, ",") {
+		if h = strings.TrimSpace(strings.ToLower(h)); h != "" {
+			set[h] = true
+		}
+	}
+	return set
 }
 
 // Handler assemble les routes et renvoie le gestionnaire HTTP racine,
@@ -84,10 +131,68 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/config", allow(http.MethodGet, s.handleConfig))
 	mux.HandleFunc("/api/health", allow(http.MethodGet, s.handleHealth))
 	mux.HandleFunc("/api/version", allow(http.MethodGet, s.handleVersion))
-	mux.HandleFunc("/api/processes/kill", allow(http.MethodPost, s.handleKill))
 	mux.HandleFunc("/api/processes/detail", allow(http.MethodGet, s.handleDetail))
-	mux.Handle("/", http.FileServer(http.FS(s.cfg.Static)))
-	return logRequests(mux)
+	// La terminaison de processus n'est routée qu'hors mode lecture seule ; en
+	// lecture seule, on répond explicitement 403 plutôt que de laisser la requête
+	// filer vers le serveur de fichiers (404 trompeur).
+	if s.cfg.ReadOnly {
+		mux.HandleFunc("/api/processes/kill", func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "mode lecture seule : terminaison désactivée", http.StatusForbidden)
+		})
+	} else {
+		mux.HandleFunc("/api/processes/kill", allow(http.MethodPost, s.handleKill))
+	}
+	mux.Handle("/", staticCacheControl(http.FileServer(http.FS(s.cfg.Static))))
+	// checkHost enveloppe tout le routage (parade au DNS rebinding) ; logRequests
+	// reste le plus externe pour journaliser aussi les requêtes refusées.
+	return logRequests(s.checkHost(mux))
+}
+
+// staticCacheControl force la revalidation des assets embarqués. embed.FS
+// n'expose pas de date de modification, donc http.FileServer n'émet ni
+// Last-Modified ni ETag : sans en-tête, le navigateur applique un cache
+// heuristique et peut resservir un ancien app.js/styles.css après une
+// reconstruction du binaire (bundle affiché désynchronisé de la version en
+// cours d'exécution). « no-cache » impose une revalidation à chaque chargement.
+func staticCacheControl(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// checkHost refuse les requêtes dont l'en-tête Host n'est ni une adresse IP
+// littérale ni un nom de confiance (cf. allowedHosts) : c'est la parade au DNS
+// rebinding, qui permettrait sinon à une page tierce de dialoguer avec ce démon
+// local en même origine. Désactivé quand aucun hôte n'a été résolu (Server
+// construit sans New, notamment dans les tests).
+func (s *Server) checkHost(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if len(s.allowedHosts) > 0 && !s.hostAllowed(r.Host) {
+			http.Error(w, "en-tête Host non autorisé", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// hostAllowed indique si l'en-tête Host (« nom » ou « nom:port ») est acceptable.
+// Une adresse IP littérale l'est toujours : un DNS rebinding s'appuie sur un nom
+// de domaine, jamais sur une IP nue. Sinon le nom doit figurer dans allowedHosts.
+func (s *Server) hostAllowed(host string) bool {
+	if host == "" {
+		return false
+	}
+	h := host
+	if hostname, _, err := net.SplitHostPort(host); err == nil {
+		h = hostname
+	}
+	// Adresse IPv6 littérale sans port : « [::1] » → « ::1 ».
+	h = strings.TrimSuffix(strings.TrimPrefix(h, "["), "]")
+	if net.ParseIP(h) != nil {
+		return true
+	}
+	return s.allowedHosts[strings.ToLower(h)]
 }
 
 // allow restreint un handler à une méthode HTTP (HEAD étant toléré pour GET),
@@ -312,7 +417,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	if refresh <= 0 {
 		// Repli défensif : NewTicker panique pour une durée ≤ 0. parseFlags
 		// écarte déjà ce cas, mais un Server construit directement pourrait ne pas.
-		refresh = defaultStreamRefresh
+		refresh = DefaultRefresh
 	}
 	ticker := time.NewTicker(refresh)
 	defer ticker.Stop()
@@ -363,10 +468,13 @@ func (s *Server) writeStreamEvent(w http.ResponseWriter, rc *http.ResponseContro
 	return rc.Flush()
 }
 
-// handleConfig expose la configuration consommée par l'interface.
+// handleConfig expose la configuration consommée par l'interface : l'intervalle
+// de rafraîchissement et le mode lecture seule (pour masquer côté client les
+// actions de terminaison quand elles sont désactivées côté serveur).
 func (s *Server) handleConfig(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, map[string]int64{
+	writeJSON(w, map[string]any{
 		"refresh_ms": s.cfg.Refresh.Milliseconds(),
+		"readonly":   s.cfg.ReadOnly,
 	})
 }
 

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -51,7 +52,14 @@ func newTestServer(refresh time.Duration) *Server {
 	static := fstest.MapFS{
 		"index.html": &fstest.MapFile{Data: []byte("<h1>OK</h1>")},
 	}
-	return New(Config{Port: 0, Refresh: refresh, Static: static, Version: "test-1.2.3"})
+	// example.com est l'hôte par défaut des requêtes httptest.NewRequest : on le
+	// déclare de confiance pour que la vérification d'en-tête Host (parade au DNS
+	// rebinding) laisse passer ces requêtes de test. La vérification elle-même est
+	// couverte par TestHostHeaderCheck.
+	return New(Config{
+		Port: 0, Refresh: refresh, Static: static, Version: "test-1.2.3",
+		TrustedHosts: "example.com",
+	})
 }
 
 func TestHandleConfig(t *testing.T) {
@@ -70,12 +78,16 @@ func TestHandleConfig(t *testing.T) {
 
 	var body struct {
 		RefreshMS int64 `json:"refresh_ms"`
+		ReadOnly  bool  `json:"readonly"`
 	}
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 		t.Fatalf("JSON invalide : %v", err)
 	}
 	if body.RefreshMS != 30000 {
 		t.Errorf("refresh_ms = %d, attendu 30000", body.RefreshMS)
+	}
+	if body.ReadOnly {
+		t.Error("readonly = true, attendu false pour un serveur de test non restreint")
 	}
 }
 
@@ -276,6 +288,54 @@ func TestHandleKill(t *testing.T) {
 	})
 }
 
+func TestReadOnlyDisablesKill(t *testing.T) {
+	var killed []int32
+	srv := &Server{
+		cfg:       Config{Static: fstest.MapFS{}, ReadOnly: true},
+		collector: stubCollector{killed: &killed},
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/processes/kill",
+		strings.NewReader(`{"pids":[42]}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("code = %d, attendu %d (mode lecture seule)", rec.Code, http.StatusForbidden)
+	}
+	if len(killed) != 0 {
+		t.Errorf("aucun PID ne doit être terminé en lecture seule, obtenu %v", killed)
+	}
+}
+
+func TestHostHeaderCheck(t *testing.T) {
+	// Serveur construit via New SANS hôte de confiance supplémentaire : la
+	// vérification d'en-tête Host est donc active. On cible /api/health, sans état.
+	srv := New(Config{Refresh: time.Second, Static: fstest.MapFS{}})
+
+	cases := []struct {
+		host string
+		want int
+	}{
+		{"localhost", http.StatusOK},
+		{"localhost:8222", http.StatusOK},
+		{"127.0.0.1:8222", http.StatusOK}, // IP littérale : jamais usurpable par rebinding
+		{"[::1]:8222", http.StatusOK},
+		{"evil.example.com", http.StatusForbidden},
+		{"attaquant.tld:8222", http.StatusForbidden},
+	}
+	for _, tc := range cases {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+		req.Host = tc.host
+		srv.Handler().ServeHTTP(rec, req)
+		if rec.Code != tc.want {
+			t.Errorf("Host %q : code = %d, attendu %d", tc.host, rec.Code, tc.want)
+		}
+	}
+}
+
 func TestHandleDetail(t *testing.T) {
 	t.Run("renvoie les instances pour les PID demandés", func(t *testing.T) {
 		srv := &Server{cfg: Config{Static: fstest.MapFS{}}, collector: stubCollector{}}
@@ -448,6 +508,80 @@ func TestHandleStream(t *testing.T) {
 	}
 }
 
+func TestHandleStreamCollectError(t *testing.T) {
+	// Erreur de collecte dès le premier événement : handleStream doit se terminer
+	// aussitôt (return), sans diffuser d'événement « data: ».
+	srv := &Server{
+		cfg:       Config{Refresh: 50 * time.Millisecond, Static: fstest.MapFS{}},
+		collector: stubCollector{err: errors.New("collecte impossible")},
+	}
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/stream", nil)
+	if err != nil {
+		t.Fatalf("création requête : %v", err)
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("requête /api/stream : %v", err)
+	}
+	defer func() { _ = res.Body.Close() }()
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("code = %d, attendu %d", res.StatusCode, http.StatusOK)
+	}
+	// Le handler retourne avant tout Write : le corps est vide et se clôt (EOF).
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("lecture du flux : %v", err)
+	}
+	if len(body) != 0 {
+		t.Errorf("flux non vide malgré l'erreur de collecte : %q", body)
+	}
+}
+
+func TestHandleStreamZeroRefreshFallback(t *testing.T) {
+	// Server construit directement avec Refresh nul (hors parseFlags) : handleStream
+	// doit retomber sur DefaultRefresh sans paniquer (NewTicker(0) paniquerait) et
+	// émettre au moins le premier événement, immédiat.
+	srv := &Server{
+		cfg:       Config{Refresh: 0, Static: fstest.MapFS{}},
+		collector: stubCollector{info: &sysinfo.Info{}},
+	}
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/stream", nil)
+	if err != nil {
+		t.Fatalf("création requête : %v", err)
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("requête /api/stream : %v", err)
+	}
+	defer func() { _ = res.Body.Close() }()
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("code = %d, attendu %d", res.StatusCode, http.StatusOK)
+	}
+	// Le premier événement (« data: … ») doit arriver malgré Refresh=0.
+	reader := bufio.NewReader(res.Body)
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatalf("aucun événement reçu avec Refresh=0 : %v", err)
+		}
+		if strings.HasPrefix(line, "data: ") {
+			return // premier événement émis : le repli a fonctionné
+		}
+	}
+}
+
 func TestServeStaticIndex(t *testing.T) {
 	srv := newTestServer(time.Second)
 	rec := httptest.NewRecorder()
@@ -460,6 +594,11 @@ func TestServeStaticIndex(t *testing.T) {
 	}
 	if got := rec.Body.String(); got != "<h1>OK</h1>" {
 		t.Errorf("corps = %q, attendu le contenu de index.html", got)
+	}
+	// Les assets embarqués doivent être servis avec revalidation, sinon le
+	// navigateur peut resservir un ancien bundle après reconstruction du binaire.
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-cache" {
+		t.Errorf("Cache-Control = %q, attendu %q", cc, "no-cache")
 	}
 }
 

@@ -1,11 +1,16 @@
 package sysinfo
 
 import (
+	"fmt"
+	"os"
+	"reflect"
 	"runtime"
 	"testing"
 	"time"
 
 	"github.com/shirou/gopsutil/v4/cpu"
+	"github.com/shirou/gopsutil/v4/disk"
+	"github.com/shirou/gopsutil/v4/sensors"
 )
 
 func TestCollect(t *testing.T) {
@@ -396,6 +401,141 @@ func TestAggregateProcesses(t *testing.T) {
 	})
 }
 
+func TestPerCoreBusy(t *testing.T) {
+	prev := []cpu.TimesStat{
+		{User: 100, Idle: 900}, // cœur 0
+		{User: 100, Idle: 900}, // cœur 1 (restera figé)
+	}
+	cur := []cpu.TimesStat{
+		{User: 200, Idle: 1800}, // cœur 0 : total Δ1000, occupé Δ100 → 10 %
+		{User: 100, Idle: 900},  // cœur 1 : identique → relevé fantôme
+	}
+	last := []float64{0, 42} // dernière valeur connue du cœur 1
+
+	got := perCoreBusy(prev, cur, last)
+	if len(got) != 2 {
+		t.Fatalf("len = %d, attendu 2", len(got))
+	}
+	if got[0] != 10 {
+		t.Errorf("cœur 0 = %v, attendu 10", got[0])
+	}
+	if got[1] != 42 {
+		t.Errorf("cœur 1 = %v, attendu 42 (valeur conservée car compteurs figés)", got[1])
+	}
+}
+
+func TestHottestTemp(t *testing.T) {
+	temps := []sensors.TemperatureStat{
+		{SensorKey: "coretemp0", Temperature: 45},
+		{SensorKey: "hot", Temperature: 61.5},
+		{SensorKey: "aberrant", Temperature: 999}, // écarté (> 130 °C)
+		{SensorKey: "zero", Temperature: 0},
+	}
+	if c, label := hottestTemp(temps); c != 61.5 || label != "hot" {
+		t.Errorf("hottestTemp = %v/%q, attendu 61.5/\"hot\"", c, label)
+	}
+	if c, label := hottestTemp(nil); c != 0 || label != "" {
+		t.Errorf("hottestTemp(nil) = %v/%q, attendu 0/\"\"", c, label)
+	}
+}
+
+func TestSelectVolumes(t *testing.T) {
+	usages := map[string]*disk.UsageStat{
+		"/":                    {Path: "/", Total: 500 * giga, Used: 300 * giga, UsedPercent: 60},
+		"/System/Volumes/Data": {Path: "/System/Volumes/Data", Total: 500 * giga, Used: 300 * giga, UsedPercent: 60}, // usage identique à "/"
+		"/boot":                {Path: "/boot", Total: 500 * 1000 * 1000, Used: 100 * 1000 * 1000, UsedPercent: 20},  // 500 Mo (< 1 Go)
+		"/data":                {Path: "/data", Total: 1000 * giga, Used: 100 * giga, UsedPercent: 10},               // volume distinct
+	}
+	usage := func(p string) (*disk.UsageStat, error) {
+		if u, ok := usages[p]; ok {
+			return u, nil
+		}
+		return nil, fmt.Errorf("volume inconnu : %s", p)
+	}
+	parts := []disk.PartitionStat{
+		{Mountpoint: "/", Fstype: "apfs"},
+		{Mountpoint: "/dev", Fstype: "devfs"},                // pseudo-fs → exclu
+		{Mountpoint: "/System/Volumes/Data", Fstype: "apfs"}, // usage identique à "/" → dédupliqué
+		{Mountpoint: "/boot", Fstype: "ext4"},                // trop petit (non défaut) → exclu
+		{Mountpoint: "/data", Fstype: "ext4"},                // distinct → conservé
+	}
+
+	pathsOf := func(ds []Disk) []string {
+		out := make([]string, len(ds))
+		for i, d := range ds {
+			out[i] = d.Path
+		}
+		return out
+	}
+
+	t.Run("filtrage, dédup et tri", func(t *testing.T) {
+		got := pathsOf(selectVolumes(parts, usage, "/"))
+		if want := []string{"/", "/data"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("volumes = %v, attendu %v", got, want)
+		}
+	})
+
+	t.Run("le volume par défaut est conservé même petit", func(t *testing.T) {
+		got := pathsOf(selectVolumes(parts, usage, "/boot"))
+		found := false
+		for _, p := range got {
+			if p == "/boot" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("volumes = %v, /boot (défaut) devrait être présent malgré sa petite taille", got)
+		}
+	})
+
+	t.Run("défaut absent des partitions : ajouté via le repli", func(t *testing.T) {
+		usages["/mnt/ext"] = &disk.UsageStat{Path: "/mnt/ext", Total: 2000 * giga, Used: 10 * giga, UsedPercent: 0.5}
+		got := pathsOf(selectVolumes(parts, usage, "/mnt/ext"))
+		found := false
+		for _, p := range got {
+			if p == "/mnt/ext" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("volumes = %v, /mnt/ext (défaut hors partitions) devrait être ajouté", got)
+		}
+	})
+
+	t.Run("dédup indépendante de l'ordre : frère APFS listé avant la racine", func(t *testing.T) {
+		// disk.Partitions peut renvoyer un volume synthétique du même conteneur
+		// APFS avant la racine. Il doit fusionner vers la racine (occupation
+		// identique), pas produire une entrée redondante qui ferait apparaître à
+		// tort le sélecteur de volume côté interface.
+		reordered := []disk.PartitionStat{
+			{Mountpoint: "/System/Volumes/Data", Fstype: "apfs"}, // listé AVANT "/"
+			{Mountpoint: "/", Fstype: "apfs"},
+		}
+		got := pathsOf(selectVolumes(reordered, usage, "/"))
+		if want := []string{"/"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("volumes = %v, attendu %v (le frère APFS doit fusionner quel que soit l'ordre)", got, want)
+		}
+	})
+}
+
+func TestRootAncestorCycle(t *testing.T) {
+	// Le garde-fou (64 itérations) doit garantir la terminaison même sur un
+	// graphe de parenté cyclique — impossible en pratique, mais le code ne doit
+	// pas pouvoir boucler indéfiniment sur des données corrompues.
+	t.Run("cycle à deux nœuds", func(t *testing.T) {
+		ppidOf := map[int32]int32{10: 11, 11: 10}
+		if got := rootAncestor(10, ppidOf); got != 10 && got != 11 {
+			t.Errorf("rootAncestor(cycle) = %d, attendu un PID du cycle (10 ou 11)", got)
+		}
+	})
+	t.Run("auto-parent (pid == ppid)", func(t *testing.T) {
+		ppidOf := map[int32]int32{10: 10}
+		if got := rootAncestor(10, ppidOf); got != 10 {
+			t.Errorf("rootAncestor(auto-parent) = %d, attendu 10", got)
+		}
+	})
+}
+
 // findProc retrouve un process par nom dans une liste, ou échoue le test.
 func findProc(t *testing.T, list []ProcessInfo, name string) ProcessInfo {
 	t.Helper()
@@ -411,6 +551,34 @@ func findProc(t *testing.T, list []ProcessInfo, name string) ProcessInfo {
 // procName génère un nom de process déterministe pour les tests.
 func procName(i int) string {
 	return "proc" + string(rune('a'+i))
+}
+
+func TestProcessDetailsOwnerFilter(t *testing.T) {
+	self := int32(os.Getpid())
+
+	// Utilisateur de référence inconnu : aucun détail n'est divulgué.
+	if got := processDetails([]int32{self}, ""); got != nil {
+		t.Errorf("attendu nil quand l'utilisateur est inconnu, obtenu %+v", got)
+	}
+
+	me := currentUsername()
+	if me == "" {
+		t.Skip("utilisateur courant indéterminable sur cette plateforme")
+	}
+
+	// Le processus de test appartient à l'utilisateur courant : il doit apparaître.
+	got := processDetails([]int32{self}, me)
+	if len(got) != 1 || got[0].PID != self {
+		t.Fatalf("attendu le seul détail du processus courant (PID %d), obtenu %+v", self, got)
+	}
+	if got[0].User != me {
+		t.Errorf("User = %q, attendu %q", got[0].User, me)
+	}
+
+	// Le même PID interrogé au nom d'un autre utilisateur est filtré (pas de fuite).
+	if other := processDetails([]int32{self}, "utilisateur-inexistant-zzz"); len(other) != 0 {
+		t.Errorf("attendu aucun détail pour un autre utilisateur, obtenu %+v", other)
+	}
 }
 
 func TestCollectDiskUnknownPath(t *testing.T) {

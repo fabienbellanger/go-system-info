@@ -8,7 +8,7 @@ DIST_DIR := dist
 VERSION  := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS  := -s -w -X main.version=$(VERSION)
 CGO      := CGO_ENABLED=0
-PORT     := 8222
+PORT     := 8223
 REFRESH  := 3s
 IMAGE    := go-system-info
 

@@ -1,6 +1,14 @@
 const DEFAULT_REFRESH_MS = 3000; // valeur de repli si /api/config est indisponible
 const CIRCUMFERENCE = 2 * Math.PI * 60; // r = 60
 
+// Seuils d'utilisation (%) : pilotent la couleur des jauges/barres (vert → orange
+// → rouge) et l'alerte affichée dans le titre d'onglet au-delà du seuil critique.
+const WARN_PCT = 70; // charge notable → orange
+const CRIT_PCT = 90; // alerte → rouge
+
+// Titre d'onglet de base, préfixé dynamiquement des mesures CPU/RAM courantes.
+const BASE_TITLE = "Informations système";
+
 // Mode d'affichage de la carte Processus : tri par CPU ou par mémoire. Le
 // basculement se fait côté client (les deux classements sont déjà reçus), sans
 // rouvrir le flux SSE.
@@ -17,11 +25,21 @@ let selectedKillable = false;
 let loadedInstancesKey = null; // clé des PID chargés avec succès dans le panneau
 let loadingInstancesKey = null; // clé en cours de chargement (évite les requêtes redondantes à chaque tick)
 let instancesGen = 0; // génération courante : ignore les réponses d'une requête devenue obsolète
+// Mode lecture seule : renseigné depuis /api/config. Quand il est actif, le
+// serveur refuse la terminaison ; le front masque donc les boutons associés.
+let readOnly = false;
+// Volume disque affiché, suivi par chemin (null = volume par défaut du flux).
+let selectedDisk = null;
+let diskOptionsKey = null; // clé des options actuellement peuplées dans le <select>
+// Filtre et tri de la liste de processus, appliqués côté client sur les
+// classements déjà reçus (le serveur envoie le top des consommateurs).
+let procFilter = "";
+let procSort = { key: "value", dir: "desc" }; // key : "value" | "name"
 
 // Couleur selon le seuil d'utilisation.
 function colorFor(pct) {
-    if (pct >= 90) return "var(--red)";
-    if (pct >= 70) return "var(--orange)";
+    if (pct >= CRIT_PCT) return "var(--red)";
+    if (pct >= WARN_PCT) return "var(--orange)";
     return "var(--green)";
 }
 
@@ -64,6 +82,74 @@ function renderSparkline(prefix, values) {
     svg.style.color = colorFor(values[values.length - 1]);
 }
 
+// renderCores affiche une grille de barres verticales, une par cœur logique,
+// chacune colorée selon le seuil. Vide si le relevé par cœur n'est pas disponible.
+function renderCores(perCore) {
+    const box = document.getElementById("cpu-cores");
+    if (!box) return;
+    if (!Array.isArray(perCore) || perCore.length === 0) {
+        box.replaceChildren();
+        return;
+    }
+    box.replaceChildren(
+        ...perCore.map((pct, i) => {
+            const v = Math.min(Math.max(pct, 0), 100);
+            const cell = document.createElement("div");
+            cell.className = "cpu-core";
+            cell.title = `Cœur ${i} : ${v.toFixed(0)} %`;
+            const fill = document.createElement("span");
+            fill.className = "cpu-core-fill";
+            fill.style.height = `${v}%`;
+            fill.style.background = colorFor(v);
+            cell.appendChild(fill);
+            return cell;
+        }),
+    );
+}
+
+// renderTemp affiche la température du capteur le plus chaud, si disponible
+// (souvent absente selon la plateforme et les droits — le badge reste alors masqué).
+function renderTemp(cpu) {
+    const el = document.getElementById("cpu-temp");
+    if (!el) return;
+    const t = cpu.temp_celsius || 0;
+    if (t > 0) {
+        el.textContent = `🌡️ ${t.toFixed(0)} °C`;
+        el.title = cpu.temp_label ? `Capteur le plus chaud : ${cpu.temp_label}` : "Capteur le plus chaud";
+        el.hidden = false;
+    } else {
+        el.hidden = true;
+    }
+}
+
+// renderSwap affiche l'occupation du swap (mémoire d'échange) sous forme d'un
+// libellé et d'une barre colorée selon le seuil. Quand aucun swap n'est actif
+// (total nul), l'état « inactif » est affiché — une information en soi.
+function renderSwap(memory) {
+    const val = document.getElementById("mem-swap-val");
+    const fill = document.getElementById("mem-swap-fill");
+    if (!val || !fill) return;
+    const total = memory.swap_total_gb || 0;
+    if (total <= 0) {
+        val.textContent = "inactif";
+        fill.style.width = "0%";
+        return;
+    }
+    const pct = Math.min(Math.max(memory.swap_used_percent || 0, 0), 100);
+    val.textContent = `${(memory.swap_used_gb || 0).toFixed(1)} / ${total.toFixed(1)} Go`;
+    fill.style.width = `${pct}%`;
+    fill.style.background = colorFor(pct);
+}
+
+// updateTitle reflète les mesures CPU/RAM dans le titre de l'onglet (utile quand
+// il est en arrière-plan) et le préfixe d'un ⚠️ dès qu'une des deux franchit le
+// seuil critique.
+function updateTitle(cpuPct, memPct) {
+    const alert = cpuPct >= CRIT_PCT || memPct >= CRIT_PCT;
+    const prefix = alert ? "⚠️ " : "";
+    document.title = `${prefix}CPU ${Math.round(cpuPct)} % · RAM ${Math.round(memPct)} % — ${BASE_TITLE}`;
+}
+
 // renderProcesses remplit la liste des processus selon le mode courant
 // (CPU ou mémoire), puis synchronise le panneau de détails. `processes` provient
 // du flux ({ top_cpu, top_mem }) ; il peut être absent/null tant que le premier
@@ -72,17 +158,53 @@ function renderProcesses(processes) {
     const list = document.getElementById("proc-list");
     if (!list) return;
 
-    const items = processes ? (procMode === "mem" ? processes.top_mem : processes.top_cpu) : null;
-    if (!Array.isArray(items) || items.length === 0) {
-        const li = document.createElement("li");
-        li.className = "proc-empty";
-        li.textContent = processes ? "Aucune donnée de processus" : "Mesure en cours…";
-        list.replaceChildren(li);
+    const base = processes ? (procMode === "mem" ? processes.top_mem : processes.top_cpu) : null;
+    if (!Array.isArray(base) || base.length === 0) {
+        list.replaceChildren(procEmpty(processes ? "Aucune donnée de processus" : "Mesure en cours…"));
     } else {
-        list.replaceChildren(...items.map(buildProcRow));
+        const items = sortProcs(filterProcs(base));
+        if (items.length === 0) {
+            list.replaceChildren(procEmpty("Aucun processus ne correspond au filtre"));
+        } else {
+            list.replaceChildren(...items.map(buildProcRow));
+        }
     }
 
     syncProcDetail(processes);
+}
+
+// procEmpty construit une ligne d'état (liste vide, filtre sans résultat…).
+function procEmpty(text) {
+    const li = document.createElement("li");
+    li.className = "proc-empty";
+    li.textContent = text;
+    return li;
+}
+
+// filterProcs ne conserve que les processus dont le nom ou l'utilisateur contient
+// le filtre courant (recherche insensible à la casse). Le filtre s'applique aux
+// classements reçus (top consommateurs) — pas à l'ensemble des processus.
+function filterProcs(items) {
+    const q = procFilter.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter(
+        (p) => (p.name || "").toLowerCase().includes(q) || (p.user || "").toLowerCase().includes(q),
+    );
+}
+
+// sortProcs renvoie une copie triée selon procSort. La valeur comparée suit le
+// mode courant (mémoire → octets ; CPU → % d'un cœur) ; « name » trie par nom.
+function sortProcs(items) {
+    const value = (p) => (procMode === "mem" ? p.mem_bytes || 0 : p.cpu_percent || 0);
+    const copy = items.slice();
+    copy.sort((a, b) => {
+        const cmp =
+            procSort.key === "name"
+                ? (a.name || "").localeCompare(b.name || "", "fr", { sensitivity: "base" })
+                : value(a) - value(b);
+        return procSort.dir === "asc" ? cmp : -cmp;
+    });
+    return copy;
 }
 
 // buildProcRow construit la ligne d'un processus (rang via CSS, nom, utilisateur,
@@ -218,9 +340,10 @@ function syncProcDetail(processes) {
         setText("pd-mem", "—");
     }
 
-    // Bouton de terminaison de toute l'application : seulement si « killable ».
+    // Bouton de terminaison de toute l'application : seulement si « killable » et
+    // hors mode lecture seule (où le serveur refuserait la terminaison).
     const actions = document.getElementById("pd-actions");
-    if (item && item.killable && selectedPids.length > 0) {
+    if (!readOnly && item && item.killable && selectedPids.length > 0) {
         if (!actions.querySelector(".proc-kill")) {
             const kill = document.createElement("button");
             kill.type = "button";
@@ -336,7 +459,7 @@ function buildTreeNode(d, depth, children) {
 
     row.append(info);
 
-    if (selectedKillable) {
+    if (selectedKillable && !readOnly) {
         const kill = document.createElement("button");
         kill.type = "button";
         kill.className = "pd-node-kill";
@@ -430,8 +553,9 @@ async function killPids(pids) {
     return { results, failures };
 }
 
-// setupProcToggle câble le sélecteur CPU/Mémoire et la fermeture du panneau de
-// détails ; le changement de mode re-rend immédiatement à partir du dernier état.
+// setupProcToggle câble les commandes de la carte Processus : fermeture du
+// panneau de détails, bascule CPU/Mémoire, recherche et tri. Chaque interaction
+// re-rend immédiatement à partir du dernier état reçu.
 function setupProcToggle() {
     const close = document.getElementById("pd-close");
     if (close) {
@@ -440,14 +564,53 @@ function setupProcToggle() {
             if (lastState) renderProcesses(lastState.system.processes);
         });
     }
+
     const toggle = document.getElementById("proc-toggle");
-    if (!toggle) return;
-    toggle.addEventListener("click", (event) => {
-        const btn = event.target.closest(".seg-btn");
-        if (!btn || btn.classList.contains("active")) return;
-        procMode = btn.dataset.mode === "mem" ? "mem" : "cpu";
-        toggle.querySelectorAll(".seg-btn").forEach((b) => b.classList.toggle("active", b === btn));
-        if (lastState) renderProcesses(lastState.system.processes);
+    if (toggle) {
+        toggle.addEventListener("click", (event) => {
+            const btn = event.target.closest(".seg-btn");
+            if (!btn || btn.classList.contains("active")) return;
+            procMode = btn.dataset.mode === "mem" ? "mem" : "cpu";
+            toggle.querySelectorAll(".seg-btn").forEach((b) => b.classList.toggle("active", b === btn));
+            if (lastState) renderProcesses(lastState.system.processes);
+        });
+    }
+
+    const search = document.getElementById("proc-search");
+    if (search) {
+        search.addEventListener("input", () => {
+            procFilter = search.value;
+            if (lastState) renderProcesses(lastState.system.processes);
+        });
+    }
+
+    const sortBox = document.getElementById("proc-sort");
+    if (sortBox) {
+        sortBox.addEventListener("click", (event) => {
+            const btn = event.target.closest(".sort-btn");
+            if (!btn) return;
+            const key = btn.dataset.key === "name" ? "name" : "value";
+            if (procSort.key === key) {
+                procSort.dir = procSort.dir === "asc" ? "desc" : "asc"; // re-clic : inverse le sens
+            } else {
+                procSort.key = key;
+                procSort.dir = key === "name" ? "asc" : "desc"; // sens par défaut sensé par colonne
+            }
+            updateSortButtons();
+            if (lastState) renderProcesses(lastState.system.processes);
+        });
+        updateSortButtons();
+    }
+}
+
+// setupDiskSelect câble le sélecteur de volume : le choix re-rend aussitôt la
+// carte Disque à partir du dernier état reçu.
+function setupDiskSelect() {
+    const sel = document.getElementById("disk-select");
+    if (!sel) return;
+    sel.addEventListener("change", () => {
+        selectedDisk = sel.value;
+        if (lastState) updateDiskCard(lastState.system);
     });
 }
 
@@ -580,6 +743,89 @@ function buildHostRow(key, value, title) {
     return li;
 }
 
+// updateDiskCard met à jour la jauge disque pour le volume choisi (ou le volume
+// par défaut du flux) et alimente le sélecteur de volumes.
+function updateDiskCard(data) {
+    const disks = Array.isArray(data.disks) ? data.disks : [];
+    populateDiskSelect(disks, data.disk.path);
+
+    // Volume à afficher : le choix de l'utilisateur s'il est encore monté, sinon
+    // le volume par défaut porté par le flux.
+    let vol = data.disk;
+    if (selectedDisk) {
+        const hit = disks.find((d) => d.path === selectedDisk);
+        if (hit) vol = hit;
+    }
+
+    // La note « purgeable » est propre à macOS (cf. version historique).
+    const isDarwin = data.host && data.host.os === "darwin";
+    const sub = isDarwin
+        ? `Montage ${vol.path}<span class="note" title="Espace purgeable non inclus : les snapshots Time Machine locaux et caches récupérables automatiquement par macOS ne sont pas comptés comme disponibles ici, contrairement au Finder ou à CleanMyMac. La valeur reflète l'espace réellement libre au sens du système de fichiers.">ℹ️</span>`
+        : `Montage ${vol.path}`;
+    updateGauge(
+        "disk",
+        vol.used_percent,
+        `${(vol.total_gb - vol.used_gb).toFixed(0)} / ${vol.total_gb.toFixed(0)} Go restant`,
+        sub,
+    );
+
+    // Infos complémentaires : système de fichiers du volume affiché et débit
+    // d'E/S disque global (toutes unités), calculé côté serveur comme le réseau.
+    const fstypeEl = document.getElementById("disk-fstype");
+    if (fstypeEl) fstypeEl.textContent = vol.fstype || data.disk.fstype || "—";
+    const io = data.disk_io || {};
+    const read = document.getElementById("disk-read");
+    const write = document.getElementById("disk-write");
+    if (read) read.textContent = formatRate(io.read_bytes_per_sec || 0);
+    if (write) write.textContent = formatRate(io.write_bytes_per_sec || 0);
+}
+
+// populateDiskSelect (re)construit les options du sélecteur de volumes quand la
+// liste change, et le masque quand il n'y a pas de choix (0 ou 1 volume).
+function populateDiskSelect(disks, defaultPath) {
+    const sel = document.getElementById("disk-select");
+    if (!sel) return;
+    if (disks.length <= 1) {
+        sel.hidden = true;
+        diskOptionsKey = null;
+        return;
+    }
+    sel.hidden = false;
+
+    const key = disks.map((d) => d.path).join("|");
+    if (key !== diskOptionsKey) {
+        diskOptionsKey = key;
+        sel.replaceChildren(
+            ...disks.map((d) => {
+                const opt = document.createElement("option");
+                opt.value = d.path;
+                opt.textContent = d.path; // chemin système : inséré comme texte
+                return opt;
+            }),
+        );
+    }
+    // Reflète la sélection courante (retombe sur le défaut si le choix a disparu).
+    const current = selectedDisk && disks.some((d) => d.path === selectedDisk) ? selectedDisk : defaultPath;
+    if (sel.value !== current) sel.value = current;
+    // Filet de sécurité : si aucune option ne correspond (chemin par défaut absent
+    // de la liste, cas anormal), on sélectionne la première pour ne jamais laisser
+    // le sélecteur affiché sans texte.
+    if (sel.selectedIndex < 0 && sel.options.length > 0) sel.selectedIndex = 0;
+}
+
+// updateSortButtons synchronise l'état visuel des boutons de tri (actif + flèche
+// de direction) avec procSort.
+function updateSortButtons() {
+    const box = document.getElementById("proc-sort");
+    if (!box) return;
+    box.querySelectorAll(".sort-btn").forEach((b) => {
+        const active = b.dataset.key === procSort.key;
+        b.classList.toggle("active", active);
+        const label = b.dataset.key === "name" ? "Nom" : "Valeur";
+        b.textContent = active ? `${label} ${procSort.dir === "asc" ? "▲" : "▼"}` : label;
+    });
+}
+
 // applyState met à jour l'interface à partir d'un état poussé par le flux SSE
 // ({ system, history }).
 function applyState(state) {
@@ -587,6 +833,8 @@ function applyState(state) {
     lastState = state; // mémorisé pour le re-rendu des processus au changement de mode
 
     updateGauge("cpu", data.cpu.used_percent, `${data.cpu.cores} cœurs`, data.cpu.model_name || "CPU");
+    renderCores(data.cpu.per_core);
+    renderTemp(data.cpu);
 
     updateGauge(
         "mem",
@@ -594,19 +842,12 @@ function applyState(state) {
         `${data.memory.used_gb.toFixed(1)} / ${data.memory.total_gb.toFixed(1)} Go`,
         `${data.memory.free_gb.toFixed(1)} Go libres`,
     );
+    renderSwap(data.memory);
 
-    // La note sur l'espace « purgeable » (snapshots Time Machine, caches
-    // récupérables) est propre à macOS : on ne l'affiche que sur cette plateforme.
-    const diskSub =
-        data.host && data.host.os === "darwin"
-            ? `Montage ${data.disk.path}<span class="note" title="L'espace purgeable (snapshots Time Machine locaux, caches récupérables automatiquement par macOS) n'est pas compté comme disponible ici, contrairement au Finder ou à CleanMyMac. La valeur reflète l'espace réellement libre au sens du système de fichiers.">ℹ️ Espace purgeable non inclus</span>`
-            : `Montage ${data.disk.path}`;
-    updateGauge(
-        "disk",
-        data.disk.used_percent,
-        `${(data.disk.total_gb - data.disk.used_gb).toFixed(0)} / ${data.disk.total_gb.toFixed(0)} Go restant`,
-        diskSub,
-    );
+    // Titre d'onglet dynamique (CPU/RAM), avec alerte au-delà du seuil critique.
+    updateTitle(data.cpu.used_percent, data.memory.used_percent);
+
+    updateDiskCard(data);
 
     const net = data.net || {};
     document.getElementById("net-recv").textContent = formatRate(net.recv_bytes_per_sec || 0);
@@ -689,12 +930,15 @@ function connect(intervalMs) {
     };
 }
 
-// Récupère l'intervalle de rafraîchissement défini côté serveur (flag -r).
+// Récupère la configuration serveur : l'intervalle de rafraîchissement (flag -r)
+// et le mode lecture seule (flag -readonly), ce dernier mémorisé dans `readOnly`
+// pour masquer les actions de terminaison. Renvoie l'intervalle à utiliser.
 async function resolveRefreshMs() {
     try {
         const res = await fetch("/api/config", { cache: "no-store" });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const cfg = await res.json();
+        readOnly = !!cfg.readonly;
         if (cfg.refresh_ms > 0) return cfg.refresh_ms;
     } catch (_) {
         // ignoré : on retombe sur la valeur par défaut
@@ -724,6 +968,7 @@ async function showVersion() {
 (async () => {
     showVersion(); // non bloquant : en parallèle de la résolution de l'intervalle
     setupProcToggle();
+    setupDiskSelect();
     const intervalMs = await resolveRefreshMs();
     const footer = document.getElementById("refresh-label");
     if (footer) footer.textContent = `${intervalMs / 1000} s`;

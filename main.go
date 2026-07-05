@@ -17,15 +17,16 @@ const (
 	// defaultPort est le port par défaut sur lequel le serveur écoute.
 	defaultPort = 8222
 
-	// defaultRefreshInterval est l'intervalle de rafraîchissement par défaut.
-	defaultRefreshInterval = 3 * time.Second
-
 	// minRefreshInterval borne l'intervalle de rafraîchissement. En deçà, la
 	// collecte et la sérialisation tourneraient en boucle trop serrée pour un
 	// gain d'affichage nul ; surtout, time.NewTicker (utilisé par le flux SSE)
 	// panique pour une durée ≤ 0. La borne rend cette valeur toujours valide.
 	minRefreshInterval = 250 * time.Millisecond
 )
+
+// L'intervalle de rafraîchissement par défaut du flag -r provient de
+// server.DefaultRefresh : une seule source de vérité, partagée avec le repli
+// défensif du flux SSE (voir server.DefaultRefresh).
 
 // publicFS embarque l'interface web dans le binaire.
 //
@@ -69,10 +70,14 @@ func parseFlags(name string, args []string, out io.Writer) (server.Config, error
 	flags.StringVar(&cfg.Host, "host", "",
 		"Adresse d'écoute (ex. 127.0.0.1 pour la seule machine locale ; vide = toutes les interfaces)")
 	flags.IntVar(&cfg.Port, "p", defaultPort, "Port d'écoute du serveur HTTP")
-	flags.DurationVar(&cfg.Refresh, "r", defaultRefreshInterval,
+	flags.DurationVar(&cfg.Refresh, "r", server.DefaultRefresh,
 		"Intervalle de rafraîchissement de l'interface (ex. 5s, 30s, 1m)")
 	flags.StringVar(&cfg.DiskPath, "d", "",
 		"Chemin du volume à surveiller (défaut : / sous Unix, C:\\ sous Windows)")
+	flags.BoolVar(&cfg.ReadOnly, "readonly", false,
+		"Mode lecture seule : désactive la terminaison de processus (POST /api/processes/kill)")
+	flags.StringVar(&cfg.TrustedHosts, "trusted-host", "",
+		"Noms d'hôte de confiance supplémentaires (séparés par des virgules) acceptés dans l'en-tête Host, en plus de localhost, du nom de la machine et des adresses IP")
 
 	if err := flags.Parse(args); err != nil {
 		return server.Config{}, err

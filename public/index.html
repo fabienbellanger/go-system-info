@@ -44,6 +44,8 @@
                         <polygon class="spark-area" id="cpu-spark-area" points="" />
                         <polyline class="spark-line" id="cpu-spark-line" points="" />
                     </svg>
+                    <div class="cpu-cores" id="cpu-cores" aria-label="Utilisation par cœur"></div>
+                    <div class="cpu-temp" id="cpu-temp" hidden></div>
                 </div>
 
                 <!-- RAM -->
@@ -68,6 +70,13 @@
                         <polygon class="spark-area" id="mem-spark-area" points="" />
                         <polyline class="spark-line" id="mem-spark-line" points="" />
                     </svg>
+                    <div class="card-extra" id="mem-extra">
+                        <div class="mini-row">
+                            <span class="mini-label">💾 Swap</span>
+                            <span class="mini-val" id="mem-swap-val">—</span>
+                        </div>
+                        <div class="mini-bar" id="mem-swap-bar"><span class="mini-bar-fill" id="mem-swap-fill"></span></div>
+                    </div>
                 </div>
 
                 <!-- Disque -->
@@ -87,6 +96,21 @@
                         </div>
                     </div>
                     <div class="detail" id="disk-detail">—</div>
+                    <select class="vol-select" id="disk-select" aria-label="Choisir le volume à afficher" hidden></select>
+                    <div class="card-extra" id="disk-extra">
+                        <div class="mini-row">
+                            <span class="mini-label">Système de fichiers</span>
+                            <span class="mini-val" id="disk-fstype">—</span>
+                        </div>
+                        <div class="mini-row">
+                            <span class="mini-label">⬇️ Lecture</span>
+                            <span class="mini-val" id="disk-read">—</span>
+                        </div>
+                        <div class="mini-row">
+                            <span class="mini-label">⬆️ Écriture</span>
+                            <span class="mini-val" id="disk-write">—</span>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Réseau -->
@@ -115,6 +139,21 @@
                         <div class="seg" id="proc-toggle" role="group" aria-label="Critère de tri des processus">
                             <button type="button" class="seg-btn active" data-mode="cpu">CPU</button>
                             <button type="button" class="seg-btn" data-mode="mem">Mémoire</button>
+                        </div>
+                    </div>
+                    <div class="proc-tools">
+                        <input
+                            type="search"
+                            class="proc-search"
+                            id="proc-search"
+                            placeholder="Filtrer par nom…"
+                            aria-label="Filtrer les processus par nom"
+                            autocomplete="off"
+                            spellcheck="false"
+                        />
+                        <div class="proc-sort" id="proc-sort" role="group" aria-label="Tri des processus">
+                            <button type="button" class="sort-btn" data-key="name">Nom</button>
+                            <button type="button" class="sort-btn active" data-key="value">Valeur</button>
                         </div>
                     </div>
                     <div class="proc-body" id="proc-body">

@@ -21,6 +21,11 @@ est séparée du serveur HTTP et du routage (`internal/server`).
 - 🖥️ Tableau de bord avec 5 cartes : Processeur, Mémoire vive, Disque, Réseau, Hôte
 - 📊 Jauges colorées selon le niveau d'utilisation (vert < 70 %, orange ≥ 70 %, rouge ≥ 90 %)
 - 📈 Sparklines : courbes d'évolution CPU/RAM sur ~2 min (historique côté serveur)
+- 🧮 Grille d'utilisation **par cœur** et **température** (capteur le plus chaud, si disponible)
+- 🔔 Titre d'onglet dynamique (CPU/RAM), préfixé d'un ⚠️ au-delà du seuil critique
+- 🗂️ **Sélecteur de volume** disque (choix parmi les volumes montés), avec **système de fichiers** et **débit d'E/S** (lecture/écriture)
+- 💾 **Swap** (mémoire d'échange) sur la carte Mémoire
+- 🔎 Liste de processus avec **recherche** par nom et **tri** (nom / valeur, ↑↓)
 - 🌐 Métriques étendues : charge moyenne (load average) et débit réseau (↑/↓ + totaux)
 - 🔌 Push **temps réel** via Server-Sent Events (plus de polling)
 - 🟢 État de connexion **visible** : en cas de coupure du flux, badge « Hors ligne » avec compteur, jauges et valeurs estompées ; reconnexion automatique
@@ -78,13 +83,15 @@ une autre machine et l'exécuter sans dépendances supplémentaires.
 
 ### Options de ligne de commande
 
-| Option  | Description                                              | Défaut                   |
-| ------- | -------------------------------------------------------- | ------------------------ |
-| `-p`    | Port d'écoute du serveur HTTP (1–65535)                  | `8222`                   |
-| `-r`    | Intervalle de rafraîchissement de l'interface (durée Go) | `3s`                     |
-| `-d`    | Chemin du volume à surveiller                            | `/` (`C:\` sous Windows) |
-| `-host` | Adresse d'écoute (vide = toutes les interfaces)          | _(toutes)_               |
-| `-h`    | Affiche l'aide                                           |                          |
+| Option          | Description                                                       | Défaut                   |
+| --------------- | ----------------------------------------------------------------- | ------------------------ |
+| `-p`            | Port d'écoute du serveur HTTP (1–65535)                           | `8222`                   |
+| `-r`            | Intervalle de rafraîchissement de l'interface (durée Go)          | `3s`                     |
+| `-d`            | Chemin du volume à surveiller                                     | `/` (`C:\` sous Windows) |
+| `-host`         | Adresse d'écoute (vide = toutes les interfaces)                   | _(toutes)_               |
+| `-readonly`     | Mode lecture seule : désactive la terminaison de processus        | `false`                  |
+| `-trusted-host` | Noms d'hôte de confiance additionnels (en-tête Host), séparés `,` | _(aucun)_                |
+| `-h`            | Affiche l'aide                                                    |                          |
 
 > L'option `-r` accepte une durée au format Go : `500ms`, `5s`, `30s`, `1m`, etc.
 > Elle pilote la fréquence d'actualisation de l'interface web (le serveur expose
@@ -96,6 +103,30 @@ une autre machine et l'exécuter sans dépendances supplémentaires.
 > Docker) ; `-host 127.0.0.1` le limite à la **machine locale** — recommandé si
 > vous n'avez pas besoin d'un accès distant, l'endpoint de terminaison ayant un
 > effet destructeur.
+
+> L'option `-readonly` neutralise la seule action destructrice de l'API
+> (`POST /api/processes/kill` répond alors `403`) : l'interface reste
+> consultable mais ne peut plus terminer de processus. C'est le réglage
+> recommandé dès que le serveur est exposé au-delà de `127.0.0.1` — il rend
+> défendable une écoute sur toutes les interfaces. Le front masque
+> automatiquement les boutons de terminaison dans ce mode.
+
+### Protection de l'en-tête `Host` (DNS rebinding)
+
+Le serveur **valide l'en-tête `Host`** de chaque requête : seuls `localhost`, le
+nom de la machine, les adresses IP littérales (jamais usurpables par rebinding)
+et les noms passés via `-trusted-host` sont acceptés ; tout autre nom reçoit un
+`403`. Cela ferme l'attaque par **DNS rebinding**, où une page web tierce
+re-résout son domaine vers `127.0.0.1` pour dialoguer en « même origine » avec ce
+démon local (et contourner ainsi les protections CSRF). Derrière un reverse proxy
+exposant l'application sous un nom de domaine, déclarez ce nom :
+`-trusted-host monitoring.example.com` (valeurs multiples séparées par des
+virgules).
+
+> Par ailleurs, `GET /api/processes/detail` ne renvoie que les processus de
+> l'utilisateur ayant lancé le serveur : la ligne de commande d'un processus
+> d'autrui (qui peut contenir des secrets) n'est jamais divulguée, au même titre
+> que la terminaison est déjà réservée à ses propres processus.
 
 > L'option `-d` choisit le volume dont l'occupation est affichée. Par défaut, la
 > racine du système de fichiers (`/`, ou `C:\` sous Windows). Exemple :
@@ -372,7 +403,10 @@ curl http://localhost:8222/api/system
   "cpu": {
     "used_percent": 19.45,
     "cores": 8,
-    "model_name": "Apple M3"
+    "model_name": "Apple M3",
+    "per_core": [24.1, 12.0, 8.3, 5.9, 3.1, 2.0, 0.0, 1.0],
+    "temp_celsius": 52.0,
+    "temp_label": "PMU tcal"
   },
   "load": {
     "load1": 2.59,
@@ -383,13 +417,22 @@ curl http://localhost:8222/api/system
     "used_percent": 82.97,
     "used_gb": 7.12,
     "free_gb": 1.46,
-    "total_gb": 8.58
+    "total_gb": 8.58,
+    "swap_used_percent": 12.5,
+    "swap_used_gb": 0.25,
+    "swap_total_gb": 2.0
   },
   "disk": {
     "used_percent": 67.05,
     "used_gb": 164.35,
     "total_gb": 245.1,
-    "path": "/"
+    "path": "/",
+    "fstype": "apfs"
+  },
+  "disks": [{ "used_percent": 67.05, "used_gb": 164.35, "total_gb": 245.1, "path": "/", "fstype": "apfs" }],
+  "disk_io": {
+    "read_bytes_per_sec": 94190.0,
+    "write_bytes_per_sec": 905044.0
   },
   "net": {
     "recv_bytes_per_sec": 1436.0,
@@ -428,6 +471,23 @@ curl http://localhost:8222/api/system
 }
 ```
 
+- **`cpu.per_core`** : occupation (0–100) de chaque cœur logique, pour la grille
+  par cœur de l'interface. **`cpu.temp_celsius`** / **`cpu.temp_label`** :
+  température du capteur le plus chaud et son identifiant — **best-effort**, ces
+  champs sont **omis** quand aucun capteur n'est exposé (fréquent selon la
+  plateforme, les droits, ou un binaire compilé sans cgo).
+- **`memory.swap_*`** : occupation du swap (mémoire d'échange) — pourcentage,
+  volume utilisé et total. **Best-effort** : sur une machine sans swap actif, les
+  trois champs valent `0` (l'interface affiche alors « inactif »).
+- **`disks`** : liste des volumes montés significatifs (pour le sélecteur de
+  volume de l'interface). Les systèmes de fichiers virtuels et les tout petits
+  volumes sont écartés, et les volumes d'un même conteneur qui remontent une
+  occupation identique (ex. volumes APFS sur macOS) sont fusionnés ; le volume
+  surveillé par défaut (`disk`) y figure toujours. **`fstype`** (présent aussi sur
+  `disk`) est le système de fichiers du volume (`apfs`, `ext4`, `ntfs`…).
+- **`disk_io`** : débit d'entrées/sorties disque **agrégé sur toutes les unités**
+  (octets/s), calculé en différenciant les compteurs cumulés — même principe que
+  `net`. C'est une mesure globale, pas par volume.
 - **`load`** : charge système moyenne sur 1, 5 et 15 minutes (load average). À
   comparer au nombre de cœurs : en dessous il reste de la marge, au-dessus le
   système est surchargé. Ce n'est **pas** un pourcentage CPU (peut dépasser le
@@ -533,7 +593,9 @@ curl -X POST http://localhost:8222/api/processes/kill \
 > ⚠️ Cet endpoint a un effet de bord destructif. Si vous exposez le serveur
 > au-delà de `localhost`, protégez-le en amont (pare-feu, reverse-proxy
 > authentifié) : la restriction « même utilisateur » limite la portée mais
-> n'authentifie pas l'appelant.
+> n'authentifie pas l'appelant. Le flag **`-readonly`** le neutralise
+> entièrement (réponse `403`). En mode lecture seule, l'endpoint n'est pas routé
+> pour la terminaison.
 
 ### `GET /api/processes/detail`
 
@@ -550,7 +612,10 @@ curl 'http://localhost:8222/api/processes/detail?pids=101,102'
 ```
 
 Les processus inaccessibles ou disparus sont simplement absents de la réponse
-(le nombre de PID interrogeables en une requête est borné).
+(le nombre de PID interrogeables en une requête est borné). **Seuls les processus
+de l'utilisateur ayant lancé le serveur** sont détaillés : le détail (dont la
+ligne de commande, susceptible de contenir des secrets) d'un processus d'autrui
+n'est jamais renvoyé.
 
 ## Versionnage du binaire
 
@@ -663,17 +728,17 @@ systeminfo/
 
 ## Routes HTTP
 
-| Méthode | Chemin                  | Description                                                  |
-| ------- | ----------------------- | ------------------------------------------------------------ |
-| `GET`   | `/`                     | Interface web (HTML/CSS/JS embarqué)                         |
-| `GET`   | `/api/system`           | Informations système au format JSON                          |
-| `GET`   | `/api/stream`           | Flux temps réel (SSE) : système + historique                 |
-| `GET`   | `/api/history`          | Historique CPU/mémoire (sparklines)                          |
-| `GET`   | `/api/config`           | Configuration de l'interface (intervalle en ms)              |
-| `GET`   | `/api/health`           | Sonde de santé (`{"status":"ok"}`)                           |
-| `GET`   | `/api/version`          | Version du binaire injectée au build                         |
-| `POST`  | `/api/processes/kill`   | Termine des processus (SIGTERM, même utilisateur uniquement) |
-| `GET`   | `/api/processes/detail` | Détail par PID (`?pids=…`) du processus sélectionné          |
+| Méthode | Chemin                  | Description                                                     |
+| ------- | ----------------------- | --------------------------------------------------------------- |
+| `GET`   | `/`                     | Interface web (HTML/CSS/JS embarqué)                            |
+| `GET`   | `/api/system`           | Informations système au format JSON                             |
+| `GET`   | `/api/stream`           | Flux temps réel (SSE) : système + historique                    |
+| `GET`   | `/api/history`          | Historique CPU/mémoire (sparklines)                             |
+| `GET`   | `/api/config`           | Configuration de l'interface (intervalle en ms, lecture seule)  |
+| `GET`   | `/api/health`           | Sonde de santé (`{"status":"ok"}`)                              |
+| `GET`   | `/api/version`          | Version du binaire injectée au build                            |
+| `POST`  | `/api/processes/kill`   | Termine des processus (même utilisateur ; `403` si `-readonly`) |
+| `GET`   | `/api/processes/detail` | Détail par PID (`?pids=…`, même utilisateur uniquement)         |
 
 ## Qualité, tests et CI
 
