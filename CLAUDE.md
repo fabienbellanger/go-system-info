@@ -41,6 +41,12 @@ go test ./internal/server  -run TestHandleStream -v
 `golangci-lint` (config `.golangci.yml`) — lancer `golangci-lint run` localement
 avant de pousser si l'outil est installé.
 
+Le front (`public/`) est linté et formaté par **Biome** (config `biome.json` :
+espaces, JS en 2, CSS/HTML en 4, largeur 120) : `bunx @biomejs/biome check public/`
+(non branché dans la CI). Les `biome-ignore` présents sont **délibérés** (le
+`!important` de `[hidden]`, les `div role="group"` des groupes de boutons) — ne
+pas les « corriger ».
+
 ### Installation en tant que service
 
 `make install`/`make uninstall` détectent l'OS hôte (`uname -s`) et génèrent le
@@ -96,6 +102,13 @@ Trois couches, découplées pour la testabilité :
 - **`public/`** — front sans build ni framework. `app.js` consomme `/api/stream`
   (SSE) via `EventSource` ; pas de polling. L'état de connexion (badge « Hors
   ligne » avec délai de grâce) est géré intégralement côté client.
+  Mise en page : trois cartes-jauges, puis une **bande d'état** `.card-strip`
+  fusionnant Réseau + Hôte (grille de tuiles clé/valeur sur deux lignes ; les
+  deux `<ul>` sont en `display: contents` et gardent les id `net-*`/`host-list`
+  que `app.js` alimente), puis la carte Processus en pleine largeur. La carte
+  CPU est une **ancre native** `<a href="#proc-card">` : clic/Entrée font
+  défiler jusqu'aux processus (défilement doux via `scroll-behavior: smooth`,
+  débrayé par `prefers-reduced-motion` ; aucun JS impliqué).
 
 ### Pièges spécifiques (déjà résolus — ne pas régresser)
 

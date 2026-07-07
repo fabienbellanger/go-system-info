@@ -18,7 +18,9 @@ est séparée du serveur HTTP et du routage (`internal/server`).
 
 ## Aperçu
 
-- 🖥️ Tableau de bord avec 5 cartes : Processeur, Mémoire vive, Disque, Réseau, Hôte
+- 🖥️ Tableau de bord : trois cartes-jauges (Processeur, Mémoire vive, Disque),
+  une **bande d'état** compacte (Réseau + Hôte) et la carte **Processus** — un
+  clic sur la carte Processeur fait glisser la page jusqu'aux processus
 - 📊 Jauges colorées selon le niveau d'utilisation (vert < 70 %, orange ≥ 70 %, rouge ≥ 90 %)
 - 📈 Sparklines : courbes d'évolution CPU/RAM sur ~2 min (historique côté serveur)
 - 🧮 Grille d'utilisation **par cœur** et **température** (capteur le plus chaud, si disponible)
@@ -405,8 +407,8 @@ curl http://localhost:8222/api/system
     "cores": 8,
     "model_name": "Apple M3",
     "per_core": [24.1, 12.0, 8.3, 5.9, 3.1, 2.0, 0.0, 1.0],
-    "temp_celsius": 52.0,
-    "temp_label": "PMU tcal"
+    "temp_celsius": 41.3,
+    "temp_label": "PMU tdie3"
   },
   "load": {
     "load1": 2.59,
@@ -473,9 +475,12 @@ curl http://localhost:8222/api/system
 
 - **`cpu.per_core`** : occupation (0–100) de chaque cœur logique, pour la grille
   par cœur de l'interface. **`cpu.temp_celsius`** / **`cpu.temp_label`** :
-  température du capteur le plus chaud et son identifiant — **best-effort**, ces
-  champs sont **omis** quand aucun capteur n'est exposé (fréquent selon la
-  plateforme, les droits, ou un binaire compilé sans cgo).
+  température du capteur le plus chaud et son identifiant. Les capteurs de die
+  CPU (« tdie ») sont **privilégiés** quand ils existent, et les références de
+  calibration (« tcal », quasi constantes ~50 °C sur Apple Silicon, qui ne sont
+  pas des thermomètres) toujours écartées. **Best-effort** : ces champs sont
+  **omis** quand aucun capteur n'est exposé (fréquent selon la plateforme, les
+  droits, ou un binaire compilé sans cgo).
 - **`memory.swap_*`** : occupation du swap (mémoire d'échange) — pourcentage,
   volume utilisé et total. **Best-effort** : sur une machine sans swap actif, les
   trois champs valent `0` (l'interface affiche alors « inactif »).
@@ -720,6 +725,7 @@ systeminfo/
 ├── Dockerfile                 # Build multi-stage → image scratch
 ├── .dockerignore
 ├── .golangci.yml              # Configuration golangci-lint
+├── biome.json                 # Lint + formatage du front (Biome)
 ├── Makefile
 ├── go.mod
 ├── go.sum
@@ -750,7 +756,9 @@ systeminfo/
   événement SSE).
 - **Lint** : `make lint` (go fmt + go vet) en local ; en CI, `golangci-lint`
   avec la config `.golangci.yml` (jeu `standard` + `bodyclose`/`unconvert`,
-  formateurs `gofmt`/`goimports`).
+  formateurs `gofmt`/`goimports`). Le front (`public/`) est linté et formaté
+  par [Biome](https://biomejs.dev/) : `bunx @biomejs/biome check public/`
+  (config `biome.json`).
 - **CI GitHub Actions** (`.github/workflows/ci.yml`) : à chaque push sur `main`
   et chaque pull request — trois jobs **test** (`go vet` + `go test -race`),
   **lint** (`golangci-lint`) et **build** (`make build-all`, cross-compilation

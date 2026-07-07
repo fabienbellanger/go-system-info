@@ -22,12 +22,12 @@
             </header>
 
             <div class="grid">
-                <!-- CPU — cliquer fait défiler jusqu'à la carte Processus (app.js). -->
-                <div
+                <!-- CPU — ancre native : cliquer fait défiler jusqu'à la carte
+                     Processus (défilement doux via scroll-behavior CSS). -->
+                <a
                     class="card card-gauge card-link"
                     id="cpu-card"
-                    role="link"
-                    tabindex="0"
+                    href="#proc-card"
                     title="Voir les processus"
                     aria-label="Processeur — aller à la liste des processus"
                 >
@@ -51,9 +51,9 @@
                         <polygon class="spark-area" id="cpu-spark-area" points="" />
                         <polyline class="spark-line" id="cpu-spark-line" points="" />
                     </svg>
-                    <div class="cpu-cores" id="cpu-cores" aria-label="Utilisation par cœur"></div>
+                    <div class="cpu-cores" id="cpu-cores" role="img" aria-label="Utilisation par cœur"></div>
                     <div class="cpu-temp" id="cpu-temp" hidden></div>
-                </div>
+                </a>
 
                 <!-- RAM -->
                 <div class="card card-gauge">
@@ -123,7 +123,7 @@
                 <!-- Réseau + Hôte : bande compacte de tuiles clé/valeur. Les listes
                      gardent leurs id (net-*, host-list) et la structure key/val :
                      app.js les alimente à l'identique. -->
-                <div class="card card-strip" role="group" aria-label="Réseau et hôte">
+                <section class="card card-strip" aria-label="Réseau et hôte">
                     <ul class="strip-list" id="net-list" aria-label="Réseau">
                         <li><span class="key">⬇️ Réception</span><span class="val" id="net-recv">—</span></li>
                         <li><span class="key">⬆️ Émission</span><span class="val" id="net-sent">—</span></li>
@@ -133,12 +133,13 @@
                     <ul class="strip-list" id="host-list" aria-label="Hôte">
                         <li><span class="key">Chargement…</span></li>
                     </ul>
-                </div>
+                </section>
 
                 <!-- Processus -->
                 <div class="card card-full" id="proc-card">
                     <div class="card-title">
                         <span class="icon">📋</span> Processus
+                        <!-- biome-ignore lint/a11y/useSemanticElements: groupe de boutons stylé (pas un champ de formulaire) ; un fieldset imposerait de neutraliser ses styles UA -->
                         <div class="seg" id="proc-toggle" role="group" aria-label="Critère de tri des processus">
                             <button type="button" class="seg-btn active" data-mode="cpu">CPU</button>
                             <button type="button" class="seg-btn" data-mode="mem">Mémoire</button>
@@ -154,6 +155,7 @@
                             autocomplete="off"
                             spellcheck="false"
                         />
+                        <!-- biome-ignore lint/a11y/useSemanticElements: groupe de boutons stylé (pas un champ de formulaire) ; un fieldset imposerait de neutraliser ses styles UA -->
                         <div class="proc-sort" id="proc-sort" role="group" aria-label="Tri des processus">
                             <button type="button" class="sort-btn" data-key="name">Nom</button>
                             <button type="button" class="sort-btn active" data-key="value">Valeur</button>
