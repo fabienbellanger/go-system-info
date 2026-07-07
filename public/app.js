@@ -553,6 +553,21 @@ async function killPids(pids) {
     return { results, failures };
 }
 
+// setupCpuCardLink fait de la carte CPU une ancre vers la liste des processus :
+// un clic (ou Entrée au clavier) fait défiler la page jusqu'à la carte Processus.
+// La douceur du défilement vient du scroll-behavior CSS, qui respecte
+// prefers-reduced-motion.
+function setupCpuCardLink() {
+    const card = document.getElementById("cpu-card");
+    const target = document.getElementById("proc-card");
+    if (!card || !target) return;
+    const go = () => target.scrollIntoView({ block: "start" });
+    card.addEventListener("click", go);
+    card.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") go();
+    });
+}
+
 // setupProcToggle câble les commandes de la carte Processus : fermeture du
 // panneau de détails, bascule CPU/Mémoire, recherche et tri. Chaque interaction
 // re-rend immédiatement à partir du dernier état reçu.
@@ -880,11 +895,9 @@ function applyState(state) {
     // HTML), à l'image du reste de l'interface, pour écarter toute injection.
     document.getElementById("host-list").replaceChildren(
         buildHostRow("🏠 Nom", host.hostname || "—"),
-        buildHostRow("🖥️ Système", host.platform || host.os || "—"),
-        buildHostRow("🏗️ Architecture", host.kernel_arch || "—"),
+        buildHostRow("🖥️ Système", `${host.platform || host.os || "—"} / ${host.kernel_arch || "—"}`),
         buildHostRow("📈 Charge", loadValue, loadTitle),
         buildHostRow("⏱️ Uptime", formatUptime(host.uptime_seconds)),
-        buildHostRow("🐹 Go", host.go_version || "—"),
     );
 
     const hist = state.history;
@@ -967,6 +980,7 @@ async function showVersion() {
 
 (async () => {
     showVersion(); // non bloquant : en parallèle de la résolution de l'intervalle
+    setupCpuCardLink();
     setupProcToggle();
     setupDiskSelect();
     const intervalMs = await resolveRefreshMs();

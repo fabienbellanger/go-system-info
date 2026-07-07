@@ -242,6 +242,9 @@ header {
     .sparkline .spark-line {
         transition: none;
     }
+    html {
+        scroll-behavior: auto; /* défilement d'ancre instantané */
+    }
 }
 
 /* ---------- Grid & Cards ---------- */
@@ -251,10 +254,9 @@ header {
     gap: 1.4rem;
 }
 
-/* Jauges (CPU, RAM, Disque) : trois cartes sur une rangée. Cartes larges
-   (Réseau, Hôte) : deux par rangée. Toutes s'étirent à hauteur égale ; la
-   liste des cartes larges se répartit verticalement (space-between) pour que
-   la moins remplie (Réseau) comble sa hauteur sans paraître vide. */
+/* Jauges (CPU, RAM, Disque) : trois cartes sur une rangée. Dessous, Réseau et
+   Hôte sont fusionnés en une bande compacte pleine largeur (.card-strip), pour
+   que la carte Processus remonte au plus près des jauges. */
 .card-gauge {
     grid-column: span 2;
     /* Cartes-jauges d'une même rangée à hauteur égale (étirées à la plus haute) ;
@@ -265,17 +267,18 @@ header {
     flex-direction: column;
 }
 
-.card-wide {
-    grid-column: span 3;
-    display: flex;
-    flex-direction: column;
-}
-
-.card-wide .info-list {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
+/* Bande Réseau + Hôte : grille de tuiles clé/valeur. 8 tuiles réparties
+   uniformément sur deux lignes de 4 (colonnes dimensionnées au contenu,
+   étalées sur la largeur). Padding vertical réduit : c'est une bande d'état,
+   pas une carte. */
+.card-strip {
+    grid-column: span 6;
+    display: grid;
+    grid-template-columns: repeat(4, auto);
     justify-content: space-between;
+    align-items: start;
+    gap: 0.9rem 1.9rem;
+    padding: 1.05rem 1.6rem;
 }
 
 /* Carte pleine largeur (liste des processus) : occupe toute la rangée. */
@@ -287,13 +290,15 @@ header {
     .grid {
         grid-template-columns: repeat(2, 1fr);
     }
-    .card-gauge,
-    .card-wide {
+    .card-gauge {
         grid-column: span 1;
     }
-    .host-card,
+    .card-strip,
     .card-full {
         grid-column: span 2; /* occupent la rangée en entier */
+    }
+    .card-strip {
+        grid-template-columns: repeat(3, auto);
     }
 }
 
@@ -302,10 +307,12 @@ header {
         grid-template-columns: 1fr;
     }
     .card-gauge,
-    .card-wide,
-    .host-card,
+    .card-strip,
     .card-full {
         grid-column: span 1;
+    }
+    .card-strip {
+        grid-template-columns: repeat(2, auto);
     }
 }
 
@@ -371,6 +378,21 @@ header {
     border-color: var(--card-border-hover);
     transform: translateY(-4px);
     box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35);
+}
+
+/* Carte cliquable (CPU → ancre vers les processus). */
+.card-link {
+    cursor: pointer;
+}
+
+.card-link:focus-visible {
+    outline: none;
+    box-shadow: inset 0 0 0 1px var(--card-border-hover);
+}
+
+/* Cible du défilement : petit dégagement pour ne pas coller au bord haut. */
+.card-full {
+    scroll-margin-top: 1rem;
 }
 
 .card-title {
@@ -519,48 +541,46 @@ header {
     transition: stroke 0.5s;
 }
 
-/* ---------- Host card ---------- */
-.info-list {
+/* ---------- Bande Réseau + Hôte ---------- */
+/* Les deux listes participent au flux de tuiles de la bande (display: contents) :
+   les <li> deviennent des tuiles étiquette/valeur qui replient toutes ensemble. */
+.strip-list {
     list-style: none;
+    display: contents;
 }
 
-.info-list li {
+.strip-list li {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 1rem;
-    padding: 0.62rem 0;
-    border-bottom: 1px solid var(--card-border);
+    flex-direction: column;
+    gap: 0.2rem;
+    min-width: 5.5rem; /* limite les micro-reflows quand une valeur change de largeur */
     font-size: 0.88rem;
 }
 
-.info-list li:last-child {
-    border-bottom: none;
-}
-
-.info-list .key {
+.strip-list .key {
     color: var(--text-dim);
+    font-size: 0.75rem;
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.4rem;
+    white-space: nowrap;
 }
 
-.info-list .val {
-    text-align: right;
+.strip-list .val {
     font-family: var(--mono);
     font-weight: 500;
     word-break: break-word;
 }
 
 /* Repère secondaire dans une valeur (ex. « · 8 cœurs » après la charge). */
-.info-list .val .ref {
+.strip-list .val .ref {
     color: var(--text-faint);
     font-size: 0.82em;
     margin-left: 0.4rem;
 }
 
-/* Lignes porteuses d'une infobulle explicative (ex. Charge). */
-.info-list li[title] {
+/* Tuiles porteuses d'une infobulle explicative (ex. Charge). */
+.strip-list li[title] {
     cursor: help;
 }
 
@@ -1207,7 +1227,7 @@ header {
 .gauge,
 .detail,
 .sparkline,
-.info-list .val {
+.strip-list .val {
     transition:
         filter 0.5s ease,
         opacity 0.5s ease;
@@ -1216,7 +1236,7 @@ header {
 .offline .gauge,
 .offline .detail,
 .offline .sparkline,
-.offline .info-list .val,
+.offline .strip-list .val,
 .offline .cpu-cores,
 .offline .cpu-temp,
 .offline .card-extra,

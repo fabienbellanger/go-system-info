@@ -22,8 +22,15 @@
             </header>
 
             <div class="grid">
-                <!-- CPU -->
-                <div class="card card-gauge">
+                <!-- CPU — cliquer fait défiler jusqu'à la carte Processus (app.js). -->
+                <div
+                    class="card card-gauge card-link"
+                    id="cpu-card"
+                    role="link"
+                    tabindex="0"
+                    title="Voir les processus"
+                    aria-label="Processeur — aller à la liste des processus"
+                >
                     <div class="card-title"><span class="icon">⚙️</span> Processeur</div>
                     <div class="gauge-wrap">
                         <div class="gauge">
@@ -113,27 +120,23 @@
                     </div>
                 </div>
 
-                <!-- Réseau -->
-                <div class="card card-wide">
-                    <div class="card-title"><span class="icon">🌐</span> Réseau</div>
-                    <ul class="info-list" id="net-list">
+                <!-- Réseau + Hôte : bande compacte de tuiles clé/valeur. Les listes
+                     gardent leurs id (net-*, host-list) et la structure key/val :
+                     app.js les alimente à l'identique. -->
+                <div class="card card-strip" role="group" aria-label="Réseau et hôte">
+                    <ul class="strip-list" id="net-list" aria-label="Réseau">
                         <li><span class="key">⬇️ Réception</span><span class="val" id="net-recv">—</span></li>
                         <li><span class="key">⬆️ Émission</span><span class="val" id="net-sent">—</span></li>
                         <li><span class="key">📥 Total reçu</span><span class="val" id="net-recv-total">—</span></li>
                         <li><span class="key">📤 Total émis</span><span class="val" id="net-sent-total">—</span></li>
                     </ul>
-                </div>
-
-                <!-- Hôte -->
-                <div class="card card-wide host-card">
-                    <div class="card-title"><span class="icon">💻</span> Hôte</div>
-                    <ul class="info-list" id="host-list">
+                    <ul class="strip-list" id="host-list" aria-label="Hôte">
                         <li><span class="key">Chargement…</span></li>
                     </ul>
                 </div>
 
                 <!-- Processus -->
-                <div class="card card-full">
+                <div class="card card-full" id="proc-card">
                     <div class="card-title">
                         <span class="icon">📋</span> Processus
                         <div class="seg" id="proc-toggle" role="group" aria-label="Critère de tri des processus">
