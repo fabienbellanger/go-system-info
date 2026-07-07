@@ -437,6 +437,30 @@ func TestHottestTemp(t *testing.T) {
 	if c, label := hottestTemp(nil); c != 0 || label != "" {
 		t.Errorf("hottestTemp(nil) = %v/%q, attendu 0/\"\"", c, label)
 	}
+
+	t.Run("préfère les capteurs de die et ignore la calibration", func(t *testing.T) {
+		// Cas Apple Silicon : « PMU tcal » (référence de calibration ~52 °C) est
+		// plus chaud que les vrais capteurs de die — il ne doit pas être retenu.
+		temps := []sensors.TemperatureStat{
+			{SensorKey: "PMU tcal", Temperature: 51.9},
+			{SensorKey: "PMU tdie3", Temperature: 41.3},
+			{SensorKey: "PMU tdie1", Temperature: 40.9},
+			{SensorKey: "NAND CH0 temp", Temperature: 34},
+		}
+		if c, label := hottestTemp(temps); c != 41.3 || label != "PMU tdie3" {
+			t.Errorf("hottestTemp = %v/%q, attendu 41.3/\"PMU tdie3\"", c, label)
+		}
+	})
+
+	t.Run("écarte tcal même sans capteur de die", func(t *testing.T) {
+		temps := []sensors.TemperatureStat{
+			{SensorKey: "PMU tcal", Temperature: 51.9},
+			{SensorKey: "NAND CH0 temp", Temperature: 34},
+		}
+		if c, label := hottestTemp(temps); c != 34 || label != "NAND CH0 temp" {
+			t.Errorf("hottestTemp = %v/%q, attendu 34/\"NAND CH0 temp\"", c, label)
+		}
+	})
 }
 
 func TestSelectVolumes(t *testing.T) {

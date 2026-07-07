@@ -116,6 +116,12 @@ Trois couches, découplées pour la testabilité :
   variance, pas un biais, qui était en cause.
 - **Comptage CPU Linux** : `cpuAllBusy` retire `Guest`/`GuestNice` du total sous
   Linux uniquement (ils sont déjà inclus dans `User`/`Nice`).
+- **Température : préférer les capteurs de die** : sur Apple Silicon, le capteur
+  le plus chaud est souvent « PMU tcal », une **référence de calibration** quasi
+  constante (~50 °C) qui n'est pas un thermomètre — la valeur affichée dépassait
+  alors de ~10 °C celle des moniteurs usuels. `hottestTemp` préfère donc les
+  capteurs « tdie » quand ils existent et écarte toujours les « tcal » du max.
+  Ne pas revenir à un simple max sur tous les capteurs.
 - **SSE et WriteTimeout** : `handleStream` neutralise le `WriteTimeout` du serveur
   pour la connexion longue via `http.NewResponseController`. Le `statusRecorder`
   implémente `Unwrap()` pour que `Flush`/`SetWriteDeadline` traversent le wrapper.

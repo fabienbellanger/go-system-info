@@ -795,16 +795,26 @@ func readHottestTemp() (float64, string) {
 }
 
 // hottestTemp renvoie la température la plus élevée (et son capteur) parmi des
-// relevés, en écartant les valeurs nulles ou aberrantes (> 130 °C).
+// relevés, en écartant les valeurs nulles ou aberrantes (> 130 °C). Les capteurs
+// de die CPU (« tdie ») sont préférés quand ils existent : sur Apple Silicon, le
+// max global retiendrait sinon « PMU tcal », une référence de calibration quasi
+// constante (~50 °C) qui n'est pas un thermomètre — d'où une valeur ~10 °C au-dessus
+// des moniteurs usuels. À défaut de « tdie », les « tcal » restent écartés du max.
 func hottestTemp(temps []sensors.TemperatureStat) (float64, string) {
-	var maxC float64
-	var label string
-	for _, t := range temps {
-		if t.Temperature > maxC && t.Temperature < 130 {
-			maxC, label = t.Temperature, t.SensorKey
+	hottest := func(keep func(key string) bool) (float64, string) {
+		var maxC float64
+		var label string
+		for _, t := range temps {
+			if keep(t.SensorKey) && t.Temperature > maxC && t.Temperature < 130 {
+				maxC, label = t.Temperature, t.SensorKey
+			}
 		}
+		return maxC, label
 	}
-	return maxC, label
+	if c, label := hottest(func(key string) bool { return strings.Contains(key, "tdie") }); c > 0 {
+		return c, label
+	}
+	return hottest(func(key string) bool { return !strings.Contains(key, "tcal") })
 }
 
 // diskSampler maintient la liste des volumes montés significatifs (pour le
