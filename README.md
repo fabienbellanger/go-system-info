@@ -505,7 +505,11 @@ curl http://localhost:8222/api/system
   processus est rattaché à son ancêtre de plus haut niveau (le processus dont le
   parent est `launchd`/pid 1) et **tout le sous-arbre est sommé** sous le nom de
   cette racine — ainsi tous les « Helium Helper » comptent dans « Helium », et un
-  outil lancé depuis un terminal/IDE est comptabilisé sous celui-ci. `count` est
+  outil lancé depuis un terminal/IDE est comptabilisé sous celui-ci. Le nom
+  affiché est celui de l'**application** : pour un exécutable logé dans un bundle
+  macOS, c'est le nom du `.app` le plus externe (« CleanMyMac X » plutôt que
+  `com.macpaw.CleanMyMac4.HealthMonitor`), et les racines portant le même libellé
+  fusionnent en une seule entrée. `count` est
   le nombre de processus de l'arbre, `pids` leur liste. `cpu_percent` est exprimé
   en **% d'un cœur** (façon `top`/`htop`) : un programme multi-thread peut
   dépasser 100 %. `cpu_percent_system` est la **même charge rapportée à la

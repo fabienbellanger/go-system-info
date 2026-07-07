@@ -312,6 +312,33 @@ func TestAggregateProcesses(t *testing.T) {
 		findProc(t, got.TopMem, "orphan") // échoue si absent
 	})
 
+	t.Run("racines de même libellé fusionnées en un seul groupe", func(t *testing.T) {
+		// Deux racines distinctes de la même application (ex. LoginItems d'un
+		// même bundle, renommés « CleanMyMac X » par appLabel) : une seule entrée,
+		// sinon la liste montre des doublons et la sélection par nom est ambiguë.
+		cur := []procSample{
+			{pid: 500, ppid: 1, name: "CleanMyMac X", user: me, rss: 10},
+			{pid: 501, ppid: 500, name: "CleanMyMac X", user: me, rss: 20},
+			{pid: 510, ppid: 1, name: "CleanMyMac X", user: me, rss: 30}, // autre racine, même libellé
+		}
+		got := aggregateProcesses(nil, cur, 1, totalMem, numCPU, me)
+		g := findProc(t, got.TopMem, "CleanMyMac X")
+		if g.Count != 3 {
+			t.Errorf("Count = %d, attendu 3 (les deux racines fusionnent)", g.Count)
+		}
+		if g.MemBytes != 60 {
+			t.Errorf("MemBytes = %d, attendu 60", g.MemBytes)
+		}
+		if len(g.PIDs) != 3 {
+			t.Errorf("PIDs = %v, attendu 3 PID", g.PIDs)
+		}
+		for _, p := range got.TopMem {
+			if p.Name == "CleanMyMac X" && p.Count != 3 {
+				t.Errorf("entrée dupliquée pour le même libellé : %+v", p)
+			}
+		}
+	})
+
 	t.Run("killable : un enfant d'un autre utilisateur rend l'arbre non killable", func(t *testing.T) {
 		cur := []procSample{
 			{pid: 400, ppid: 1, name: "app", user: me, rss: 10},
@@ -421,6 +448,34 @@ func TestPerCoreBusy(t *testing.T) {
 	}
 	if got[1] != 42 {
 		t.Errorf("cœur 1 = %v, attendu 42 (valeur conservée car compteurs figés)", got[1])
+	}
+}
+
+func TestAppLabel(t *testing.T) {
+	cases := []struct {
+		exe, name, want string
+	}{
+		// Bundle macOS : le nom du .app le plus externe l'emporte sur le nom binaire.
+		{
+			exe:  "/Applications/CleanMyMac X.app/Contents/Library/LoginItems/CleanMyMac X Menu.app/Contents/MacOS/CleanMyMac X Menu",
+			name: "com.macpaw.CleanMyMac4.Menu",
+			want: "CleanMyMac X",
+		},
+		{
+			exe:  "/Applications/Bitwarden.app/Contents/MacOS/Bitwarden",
+			name: "Bitwarden",
+			want: "Bitwarden",
+		},
+		// Binaire hors bundle : nom brut conservé.
+		{exe: "/usr/libexec/coreauthd", name: "coreauthd", want: "coreauthd"},
+		{exe: "", name: "gsi", want: "gsi"},
+		// Composant « .app » sans nom : ignoré (repli sur le nom brut).
+		{exe: "/tmp/.app/bin", name: "outil", want: "outil"},
+	}
+	for _, c := range cases {
+		if got := appLabel(c.exe, c.name); got != c.want {
+			t.Errorf("appLabel(%q, %q) = %q, attendu %q", c.exe, c.name, got, c.want)
+		}
 	}
 }
 

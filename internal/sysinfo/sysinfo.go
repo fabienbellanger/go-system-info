@@ -1198,6 +1198,14 @@ func readProcs(users usernameCache) []procSample {
 		if err != nil || name == "" {
 			continue
 		}
+		// Libellé : préférer le nom d'application du bundle macOS au nom du
+		// binaire, souvent technique pour les services embarqués (l'exécutable
+		// « com.macpaw.CleanMyMac4.HealthMonitor » vit dans « CleanMyMac X.app »).
+		// Le chemin de l'exécutable est best-effort (refusé pour les processus
+		// protégés) : on garde alors le nom brut.
+		if exe, err := p.Exe(); err == nil {
+			name = appLabel(exe, name)
+		}
 		times, err := p.Times()
 		if err != nil {
 			continue
@@ -1225,9 +1233,25 @@ func readProcs(users usernameCache) []procSample {
 	return samples
 }
 
+// appLabel dérive le libellé d'affichage d'un processus depuis le chemin de son
+// exécutable : le nom du bundle « .app » le plus externe (macOS), c'est-à-dire
+// l'application telle que l'utilisateur la connaît — « CleanMyMac X » pour
+// /Applications/CleanMyMac X.app/…/com.macpaw.CleanMyMac4.HealthMonitor. Hors
+// bundle (binaire nu, autres plateformes), le nom brut est conservé.
+func appLabel(exe, name string) string {
+	for part := range strings.SplitSeq(exe, "/") {
+		if app, ok := strings.CutSuffix(part, ".app"); ok && app != "" {
+			return app
+		}
+	}
+	return name
+}
+
 // aggregateProcesses regroupe les processus par **application** : chacun est
 // rattaché à son ancêtre de plus haut niveau (cf. rootAncestor) et tout le
-// sous-arbre est sommé sous le nom de cette racine. Le CPU est calculé par delta
+// sous-arbre est sommé sous le nom de cette racine. Les racines portant le même
+// libellé fusionnent en un seul groupe (une application peut lancer plusieurs
+// racines : agents, LoginItems…). Le CPU est calculé par delta
 // de temps CPU sur l'intervalle, en % d'un cœur (façon top/htop : un programme
 // multi-thread peut dépasser 100 %). Un groupe est « killable » si toutes ses
 // instances appartiennent à currentUser. Renvoie les deux classements bornés à
@@ -1259,7 +1283,9 @@ func aggregateProcesses(prev, cur []procSample, elapsed float64, totalMem uint64
 		info     *ProcessInfo
 		allOwned bool // toutes les instances appartiennent à currentUser
 	}
-	groups := make(map[int32]*group)
+	// Groupes indexés par libellé de racine (et non par PID de racine) : les
+	// racines d'une même application fusionnent en une seule entrée.
+	groups := make(map[string]*group)
 	for _, s := range cur {
 		root := rootAncestor(s.pid, ppidOf)
 
@@ -1272,10 +1298,10 @@ func aggregateProcesses(prev, cur []procSample, elapsed float64, totalMem uint64
 			}
 		}
 
-		g := groups[root]
+		g := groups[nameOf[root]]
 		if g == nil {
 			g = &group{info: &ProcessInfo{Name: nameOf[root], User: userOf[root]}, allOwned: true}
-			groups[root] = g
+			groups[nameOf[root]] = g
 		}
 		g.info.Count++
 		g.info.CPUPercent += cpuPct

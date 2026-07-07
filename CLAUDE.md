@@ -152,6 +152,13 @@ Trois couches, découplées pour la testabilité :
   nom de la racine. Conséquence assumée : un outil lancé depuis un terminal/IDE
   est comptabilisé sous celui-ci (ex. `claude` sous `zed`). Relevé espacé
   (`procSampleInterval`, 3 s) car l'énumération est coûteuse.
+- **Libellé = nom d'application** : `appLabel` remplace le nom du binaire par le
+  nom du bundle `.app` **le plus externe** du chemin de l'exécutable (best-effort
+  via `p.Exe()`) — « CleanMyMac X » plutôt que `com.macpaw.CleanMyMac4.Menu`.
+  Les groupes sont indexés **par libellé** (et non par PID de racine) : les
+  racines d'une même application (LoginItems, agents…) fusionnent en une seule
+  entrée — sinon la liste montre des doublons et la sélection par nom du front
+  devient ambiguë. Le panneau de détails garde, lui, les noms bruts par PID.
 - **Terminaison de processus** : `killOwnedProcess` n'envoie SIGTERM qu'aux
   processus de l'utilisateur courant (revérifié par PID au moment du kill, pas
   d'après le cache). Ne pas relâcher ce garde-fou.
