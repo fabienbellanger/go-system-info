@@ -199,7 +199,7 @@ func (s *Server) hostAllowed(host string) bool {
 // répondant 405 avec l'en-tête Allow sinon.
 func allow(method string, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != method && !(method == http.MethodGet && r.Method == http.MethodHead) {
+		if r.Method != method && (method != http.MethodGet || r.Method != http.MethodHead) {
 			w.Header().Set("Allow", method)
 			http.Error(w, "méthode non autorisée", http.StatusMethodNotAllowed)
 			return

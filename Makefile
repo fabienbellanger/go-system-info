@@ -71,6 +71,11 @@ bench:
 lint:
 	go fmt ./...
 	go vet ./...
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		golangci-lint run; \
+	else \
+		echo "golangci-lint absent : installez-le pour reproduire la CI (https://golangci-lint.run/)."; \
+	fi
 
 fix:
 	go fix ./...

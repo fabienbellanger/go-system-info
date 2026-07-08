@@ -100,6 +100,6 @@ func parseFlags(name string, args []string, out io.Writer) (server.Config, error
 // reportErr écrit err sur out (comme le fait flag pour ses propres erreurs) puis
 // la renvoie, afin que l'utilisateur voie le motif du refus avant l'os.Exit(2).
 func reportErr(out io.Writer, err error) error {
-	fmt.Fprintln(out, err)
+	_, _ = fmt.Fprintln(out, err)
 	return err
 }

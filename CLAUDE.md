@@ -36,9 +36,9 @@ go test ./internal/sysinfo -run TestCpuBusyPercent -race
 go test ./internal/server  -run TestHandleStream -v
 ```
 
-`make lint` ne fait que `go fmt` + `go vet` en local. La CI exécute en plus
-`golangci-lint` (config `.golangci.yml`) — lancer `golangci-lint run` localement
-avant de pousser si l'outil est installé.
+`make lint` fait `go fmt` + `go vet`, puis `golangci-lint run` (config
+`.golangci.yml`, comme la CI) **si l'outil est installé** — sinon il l'ignore
+avec un message. Installer `golangci-lint` pour reproduire la CI localement.
 
 Le front (`public/`) est linté et formaté par **Biome** (config `biome.json` :
 espaces, JS en 2, CSS/HTML en 4, largeur 120) : `bunx @biomejs/biome check public/`

@@ -140,14 +140,14 @@ func openSMC() (*smc, error) {
 
 	service := ioServiceGetMatchingService(0, ioServiceMatching(ioServiceSMC))
 	if service == 0 {
-		purego.Dlclose(iokit)
+		_ = purego.Dlclose(iokit)
 		return nil, errSMCNotFound
 	}
 
 	var conn uint32
 	if ioServiceOpen(service, machTaskSelf(), 0, &conn) != kSMCSuccess {
 		ioObjectRelease(service)
-		purego.Dlclose(iokit)
+		_ = purego.Dlclose(iokit)
 		return nil, errSMCOpen
 	}
 	ioObjectRelease(service)
@@ -158,7 +158,7 @@ func openSMC() (*smc, error) {
 
 func (s *smc) close() {
 	s.ioServiceClose(s.conn)
-	purego.Dlclose(s.iokit)
+	_ = purego.Dlclose(s.iokit)
 }
 
 // readTemp lit la clé SMC donnée et renvoie la température en °C (0 si absente,
