@@ -787,12 +787,10 @@ func (s *tempSampler) run(ctx context.Context) {
 	}
 }
 
-// readHottestTemp lit les capteurs et renvoie la valeur la plus chaude. Best-effort :
-// une erreur (capteurs indisponibles) renvoie une liste vide, donc 0.
-func readHottestTemp() (float64, string) {
-	temps, _ := sensors.SensorsTemperatures()
-	return hottestTemp(temps)
-}
+// readHottestTemp lit les capteurs et renvoie la valeur la plus chaude. Son
+// implémentation est spécifique à la plateforme (voir temp_generic.go et
+// temp_darwin_amd64.go) : gopsutil décode mal les capteurs SMC sur les Mac Intel
+// (toutes les valeurs y ressortent à 0), d'où une lecture SMC directe dédiée.
 
 // hottestTemp renvoie la température la plus élevée (et son capteur) parmi des
 // relevés, en écartant les valeurs nulles ou aberrantes (> 130 °C). Les capteurs

@@ -135,6 +135,24 @@ Trois couches, découplées pour la testabilité :
   alors de ~10 °C celle des moniteurs usuels. `hottestTemp` préfère donc les
   capteurs « tdie » quand ils existent et écarte toujours les « tcal » du max.
   Ne pas revenir à un simple max sur tous les capteurs.
+- **Température : Mac Intel (darwin/amd64)** : gopsutil décode mal les capteurs
+  SMC sur Intel — son `getTemperature` renvoie `0` précisément pour le format
+  `sp78` qu'utilisent les thermomètres, donc *tous* les capteurs ressortent à
+  0 °C et le champ disparaît (alors qu'Apple Silicon passe, lui, par l'API HID
+  IOKit et fonctionne). `readHottestTemp` est donc **spécifique à la plateforme** :
+  `temp_generic.go` (`!darwin || arm64`) délègue à gopsutil (via `hottestTemp`) ;
+  `temp_darwin_amd64.go` rouvre l'AppleSMC via **purego** (pas de cgo —
+  `CGO_ENABLED=0` reste valable) et décode `sp78`/`flt` correctement. Le
+  `dataType`/`dataSize` d'une clé n'est renseigné que par l'appel `GetKeyInfo`,
+  **pas** par `ReadKey` (piège : décoder d'après la réponse de lecture donne 0).
+  Ne pas re-router l'Intel vers `sensors.SensorsTemperatures()`.
+  - **Choix de la sonde CPU sur Intel** : ne PAS prendre le max global. Les sondes
+    par cœur (`TCxC`) et le PECI (`TCXC`) lisent ~10-15 °C plus chaud que ce
+    qu'affichent les moniteurs usuels (CleanMyMac, iStat), qui montrent la
+    proximité/die (`TC0P`/`TC0D`). `readHottestTemp` retient donc la **première**
+    clé lisible et non aberrante de `cpuTempKeys`, ordonnée par préférence
+    (proximité/die d'abord, sondes chaudes en dernier recours). Ne pas revenir à
+    un max sur toutes les sondes.
 - **SSE et WriteTimeout** : `handleStream` neutralise le `WriteTimeout` du serveur
   pour la connexion longue via `http.NewResponseController`. Le `statusRecorder`
   implémente `Unwrap()` pour que `Flush`/`SetWriteDeadline` traversent le wrapper.
