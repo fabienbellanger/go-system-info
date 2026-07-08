@@ -10,8 +10,7 @@ flux SSE, et les affiche dans une interface web sombre embarquée dans le binair
 Le binaire est **autonome et fonctionne hors-ligne** : l'interface, les polices
 `.woff2` et le favicon sont embarqués via `//go:embed public` (`main.go`).
 
-La langue du projet est le **français** : commentaires, messages de log et de
-commit le sont également. Conserver cette convention.
+La langue du projet est le **français** : commentaires, messages de log le sont également. Conserver cette convention.
 
 ## Commandes
 
@@ -82,17 +81,17 @@ Trois couches, découplées pour la testabilité :
 
 - **`internal/sysinfo`** — collecte des métriques (dépend de `gopsutil/v4`).
   Deux modes :
-  - `Collect()` (fonction libre) fait une mesure CPU **bloquante** sur 500 ms —
-    pour un relevé ponctuel.
-  - `Collector` (utilisé par le serveur) échantillonne dans des goroutines
-    d'arrière-plan (`Start(ctx)`) et met les valeurs en cache, de sorte que
-    `Collect()` renvoie **instantanément**. Un sampler par métrique, avec sa
-    propre cadence : CPU global (`cpuSampler`), CPU par cœur (`coreSampler`),
-    réseau (`netSampler`, 1 s), **E/S disque** (`diskIOSampler`, 1 s, agrégé
-    toutes unités — même différenciation de compteurs cumulés que le réseau),
-    processus (`procSampler`, 3 s), volumes montés (`diskSampler`, 5 s),
-    température (`tempSampler`, 5 s). `History()` expose un anneau circulaire
-    thread-safe (~120 points à 1/s, ~2 min) pour les sparklines.
+    - `Collect()` (fonction libre) fait une mesure CPU **bloquante** sur 500 ms —
+      pour un relevé ponctuel.
+    - `Collector` (utilisé par le serveur) échantillonne dans des goroutines
+      d'arrière-plan (`Start(ctx)`) et met les valeurs en cache, de sorte que
+      `Collect()` renvoie **instantanément**. Un sampler par métrique, avec sa
+      propre cadence : CPU global (`cpuSampler`), CPU par cœur (`coreSampler`),
+      réseau (`netSampler`, 1 s), **E/S disque** (`diskIOSampler`, 1 s, agrégé
+      toutes unités — même différenciation de compteurs cumulés que le réseau),
+      processus (`procSampler`, 3 s), volumes montés (`diskSampler`, 5 s),
+      température (`tempSampler`, 5 s). `History()` expose un anneau circulaire
+      thread-safe (~120 points à 1/s, ~2 min) pour les sparklines.
 
 - **`internal/server`** — serveur HTTP, routage et sérialisation JSON. Le
   collecteur est injecté derrière l'interface `systemCollector`, ce qui permet
@@ -137,7 +136,7 @@ Trois couches, découplées pour la testabilité :
   Ne pas revenir à un simple max sur tous les capteurs.
 - **Température : Mac Intel (darwin/amd64)** : gopsutil décode mal les capteurs
   SMC sur Intel — son `getTemperature` renvoie `0` précisément pour le format
-  `sp78` qu'utilisent les thermomètres, donc *tous* les capteurs ressortent à
+  `sp78` qu'utilisent les thermomètres, donc _tous_ les capteurs ressortent à
   0 °C et le champ disparaît (alors qu'Apple Silicon passe, lui, par l'API HID
   IOKit et fonctionne). `readHottestTemp` est donc **spécifique à la plateforme** :
   `temp_generic.go` (`!darwin || arm64`) délègue à gopsutil (via `hottestTemp`) ;
@@ -146,13 +145,13 @@ Trois couches, découplées pour la testabilité :
   `dataType`/`dataSize` d'une clé n'est renseigné que par l'appel `GetKeyInfo`,
   **pas** par `ReadKey` (piège : décoder d'après la réponse de lecture donne 0).
   Ne pas re-router l'Intel vers `sensors.SensorsTemperatures()`.
-  - **Choix de la sonde CPU sur Intel** : ne PAS prendre le max global. Les sondes
-    par cœur (`TCxC`) et le PECI (`TCXC`) lisent ~10-15 °C plus chaud que ce
-    qu'affichent les moniteurs usuels (CleanMyMac, iStat), qui montrent la
-    proximité/die (`TC0P`/`TC0D`). `readHottestTemp` retient donc la **première**
-    clé lisible et non aberrante de `cpuTempKeys`, ordonnée par préférence
-    (proximité/die d'abord, sondes chaudes en dernier recours). Ne pas revenir à
-    un max sur toutes les sondes.
+    - **Choix de la sonde CPU sur Intel** : ne PAS prendre le max global. Les sondes
+      par cœur (`TCxC`) et le PECI (`TCXC`) lisent ~10-15 °C plus chaud que ce
+      qu'affichent les moniteurs usuels (CleanMyMac, iStat), qui montrent la
+      proximité/die (`TC0P`/`TC0D`). `readHottestTemp` retient donc la **première**
+      clé lisible et non aberrante de `cpuTempKeys`, ordonnée par préférence
+      (proximité/die d'abord, sondes chaudes en dernier recours). Ne pas revenir à
+      un max sur toutes les sondes.
 - **SSE et WriteTimeout** : `handleStream` neutralise le `WriteTimeout` du serveur
   pour la connexion longue via `http.NewResponseController`. Le `statusRecorder`
   implémente `Unwrap()` pour que `Flush`/`SetWriteDeadline` traversent le wrapper.
