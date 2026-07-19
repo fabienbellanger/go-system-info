@@ -219,6 +219,15 @@ func (s *Server) ListenAndServe() error {
 	// instantanées et la charge de mesure reste constante.
 	s.collector.Start(ctx)
 
+	// Écoute ouverte à tout le réseau avec la terminaison de processus active :
+	// signalé au démarrage, car tout hôte pouvant joindre le port peut alors agir
+	// sur les processus de l'utilisateur du serveur (aucune authentification —
+	// cf. README, l'endpoint est à protéger en amont si le serveur est exposé).
+	if !s.cfg.ReadOnly && (s.cfg.Host == "" || s.cfg.Host == "0.0.0.0" || s.cfg.Host == "::") {
+		slog.Warn("écoute sur toutes les interfaces avec terminaison de processus active ; " +
+			"restreignez l'écoute avec -host 127.0.0.1 ou désactivez la terminaison avec -readonly")
+	}
+
 	// Host vide → « :port » = toutes les interfaces ; sinon « host:port » pour
 	// restreindre l'écoute (ex. 127.0.0.1 pour la seule machine locale).
 	addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
@@ -334,14 +343,23 @@ func (s *Server) handleKill(w http.ResponseWriter, r *http.Request) {
 	}
 
 	results := make([]killResult, 0, len(req.PIDs))
+	failed := 0
 	for _, pid := range req.PIDs {
 		res := killResult{PID: pid, OK: true}
 		if err := s.collector.Kill(pid); err != nil {
 			res.OK = false
 			res.Error = err.Error()
+			failed++
 		}
 		results = append(results, res)
 	}
+	// Trace d'audit : l'endpoint est destructeur et le middleware ne journalise
+	// que « POST …/kill 200 » — on consigne ici les cibles et l'issue.
+	slog.Info("terminaison de processus demandée",
+		"pids", req.PIDs,
+		"échecs", failed,
+		"remote", r.RemoteAddr,
+	)
 	writeJSON(w, map[string]any{"results": results})
 }
 
@@ -357,17 +375,23 @@ func hasJSONContentType(r *http.Request) bool {
 const maxDetailPIDs = 128
 
 // handleDetail renvoie le détail courant des processus dont les PID sont passés
-// dans le paramètre de requête `pids` (liste séparée par des virgules).
+// dans le paramètre de requête `pids` (liste séparée par des virgules). Au-delà
+// de maxDetailPIDs, la liste est tronquée et la réponse porte `truncated: true`
+// pour que le client puisse signaler un arbre partiel — préférable à un refus :
+// un groupe légitime (navigateur et ses helpers…) peut dépasser la borne.
 func (s *Server) handleDetail(w http.ResponseWriter, r *http.Request) {
 	pids := parsePIDs(r.URL.Query().Get("pids"))
 	if len(pids) == 0 {
 		http.Error(w, "paramètre pids manquant ou invalide", http.StatusBadRequest)
 		return
 	}
+	resp := map[string]any{}
 	if len(pids) > maxDetailPIDs {
 		pids = pids[:maxDetailPIDs]
+		resp["truncated"] = true
 	}
-	writeJSON(w, map[string]any{"instances": s.collector.Details(pids)})
+	resp["instances"] = s.collector.Details(pids)
+	writeJSON(w, resp)
 }
 
 // parsePIDs convertit une liste de PID séparés par des virgules ("12,34") en

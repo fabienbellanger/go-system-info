@@ -620,8 +620,10 @@ curl 'http://localhost:8222/api/processes/detail?pids=101,102'
 #   "create_time":1719400000000,"mem_bytes":123456}]}
 ```
 
-Les processus inaccessibles ou disparus sont simplement absents de la réponse
-(le nombre de PID interrogeables en une requête est borné). **Seuls les processus
+Les processus inaccessibles ou disparus sont simplement absents de la réponse.
+Le nombre de PID interrogeables en une requête est borné : au-delà, la liste est
+tronquée et la réponse porte `"truncated": true` (l'interface signale alors un
+arbre partiel). **Seuls les processus
 de l'utilisateur ayant lancé le serveur** sont détaillés : le détail (dont la
 ligne de commande, susceptible de contenir des secrets) d'un processus d'autrui
 n'est jamais renvoyé.

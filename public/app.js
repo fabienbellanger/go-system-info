@@ -56,7 +56,17 @@ function updateGauge(prefix, pct, detail, sub) {
   // d'un drop-shadow SVG recalculé à chaque frame de la transition de l'arc.
   const gauge = arc.closest(".gauge");
   if (gauge) gauge.style.setProperty("--gauge-glow", color);
-  det.innerHTML = detail + (sub ? `<span class="sub">${sub}</span>` : "");
+  // Construction en DOM (jamais innerHTML) : detail et sub véhiculent des
+  // valeurs système non maîtrisées (chemin de montage, modèle de CPU) — un nom
+  // de volume piégé ne doit pas pouvoir injecter de balisage. `sub` accepte une
+  // chaîne (insérée comme texte) ou un nœud déjà construit.
+  det.replaceChildren(detail);
+  if (sub) {
+    const span = document.createElement("span");
+    span.className = "sub";
+    span.append(sub);
+    det.append(span);
+  }
 }
 
 // renderSparkline trace la courbe d'évolution d'une série de pourcentages
@@ -380,6 +390,14 @@ async function loadInstances(pids, key) {
     const data = await res.json();
     if (gen !== instancesGen) return;
     renderTree(box, data.instances || []);
+    // Le serveur borne le nombre de PID par requête : au-delà il tronque et le
+    // signale (truncated) — l'arbre affiché est alors partiel, on le dit.
+    if (data.truncated) {
+      const note = document.createElement("div");
+      note.className = "pd-truncated";
+      note.textContent = "Arbre partiel : le groupe compte trop d'instances pour toutes les afficher.";
+      box.append(note);
+    }
     loadedInstancesKey = key;
   } catch (err) {
     if (gen !== instancesGen) return;
@@ -757,11 +775,21 @@ function updateDiskCard(data) {
     if (hit) vol = hit;
   }
 
-  // La note « purgeable » est propre à macOS (cf. version historique).
+  // La note « purgeable » est propre à macOS (cf. version historique). Le
+  // chemin de montage est inséré comme texte : un nom de volume (clé USB,
+  // image disque) peut contenir n'importe quels caractères.
   const isDarwin = data.host && data.host.os === "darwin";
-  const sub = isDarwin
-    ? `Montage ${vol.path}<span class="note" title="Espace purgeable non inclus : les snapshots Time Machine locaux et caches récupérables automatiquement par macOS ne sont pas comptés comme disponibles ici, contrairement au Finder ou à CleanMyMac. La valeur reflète l'espace réellement libre au sens du système de fichiers.">ℹ️</span>`
-    : `Montage ${vol.path}`;
+  let sub = `Montage ${vol.path}`;
+  if (isDarwin) {
+    const frag = document.createDocumentFragment();
+    const note = document.createElement("span");
+    note.className = "note";
+    note.title =
+      "Espace purgeable non inclus : les snapshots Time Machine locaux et caches récupérables automatiquement par macOS ne sont pas comptés comme disponibles ici, contrairement au Finder ou à CleanMyMac. La valeur reflète l'espace réellement libre au sens du système de fichiers.";
+    note.textContent = "ℹ️";
+    frag.append(sub, note);
+    sub = frag;
+  }
   updateGauge(
     "disk",
     vol.used_percent,

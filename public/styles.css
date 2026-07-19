@@ -918,6 +918,15 @@ header {
     color: var(--text-faint);
 }
 
+/* Note affichée sous l'arbre quand le serveur a tronqué la liste des instances
+   (groupe dépassant la borne de PID par requête). */
+.pd-truncated {
+    font-size: 0.72rem;
+    font-style: italic;
+    color: var(--text-faint);
+    padding: 0.3rem 0;
+}
+
 /* Bouton de terminaison par nœud de l'arbre. */
 .pd-node-kill {
     flex-shrink: 0;

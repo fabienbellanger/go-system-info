@@ -764,25 +764,46 @@ func (s *tempSampler) set(c float64, label string) {
 	s.mu.Unlock()
 }
 
-// run relève la température à intervalle régulier jusqu'à l'annulation de ctx. Si
-// le premier relevé n'expose aucun capteur exploitable, la goroutine s'arrête :
-// inutile de sonder en boucle une plateforme qui ne fournit rien.
+// tempProbeAttempts est le nombre de relevés nuls consécutifs tolérés au
+// démarrage avant de conclure que la plateforme n'expose aucun capteur et
+// d'arrêter le sampler. Un seul essai ne suffit pas : lancé tôt au boot (service)
+// ou pendant un pic de charge, le premier relevé peut échouer de façon
+// transitoire alors que les capteurs existent — abandonner d'emblée priverait
+// l'interface de la température jusqu'au redémarrage du serveur.
+const tempProbeAttempts = 3
+
+// run relève la température à intervalle régulier jusqu'à l'annulation de ctx.
+// Si les tempProbeAttempts premiers relevés n'exposent aucun capteur
+// exploitable, la goroutine s'arrête : inutile de sonder en boucle une
+// plateforme qui ne fournit rien. Après un premier relevé réussi, le sampler ne
+// s'arrête plus : un échec ponctuel publie 0 (le front masque alors le champ)
+// et le relevé suivant reprend normalement.
 func (s *tempSampler) run(ctx context.Context) {
 	c, label := readHottestTemp()
 	s.set(c, label)
-	if c == 0 {
-		return
-	}
+	seeded := c > 0
 
 	ticker := time.NewTicker(tempSampleInterval)
 	defer ticker.Stop()
 
+	attempts := 1
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			s.set(readHottestTemp())
+			c, label = readHottestTemp()
+			if !seeded {
+				attempts++
+				if c == 0 {
+					if attempts >= tempProbeAttempts {
+						return
+					}
+					continue
+				}
+				seeded = true
+			}
+			s.set(c, label)
 		}
 	}
 }

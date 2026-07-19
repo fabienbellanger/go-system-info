@@ -371,6 +371,54 @@ func TestHandleDetail(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("au-delà de la borne : liste tronquée et signalée", func(t *testing.T) {
+		srv := &Server{cfg: Config{Static: fstest.MapFS{}}, collector: stubCollector{}}
+		ids := make([]string, maxDetailPIDs+10)
+		for i := range ids {
+			ids[i] = strconv.Itoa(i + 1)
+		}
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet,
+			"/api/processes/detail?pids="+strings.Join(ids, ","), nil)
+
+		srv.Handler().ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("code = %d, attendu %d", rec.Code, http.StatusOK)
+		}
+		var body struct {
+			Instances []struct {
+				PID int32 `json:"pid"`
+			} `json:"instances"`
+			Truncated bool `json:"truncated"`
+		}
+		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+			t.Fatalf("décodage : %v", err)
+		}
+		if !body.Truncated {
+			t.Error("truncated = false, attendu true")
+		}
+		if len(body.Instances) != maxDetailPIDs {
+			t.Errorf("instances = %d, attendu %d", len(body.Instances), maxDetailPIDs)
+		}
+	})
+
+	t.Run("dans la borne : pas de signal de troncature", func(t *testing.T) {
+		srv := &Server{cfg: Config{Static: fstest.MapFS{}}, collector: stubCollector{}}
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/processes/detail?pids=10,20", nil)
+
+		srv.Handler().ServeHTTP(rec, req)
+
+		var body map[string]any
+		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+			t.Fatalf("décodage : %v", err)
+		}
+		if _, present := body["truncated"]; present {
+			t.Error("truncated présent, attendu absent quand la liste tient dans la borne")
+		}
+	})
 }
 
 func TestParsePIDs(t *testing.T) {
