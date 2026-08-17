@@ -1,0 +1,11 @@
+{
+    "version": "0.0.1",
+    "configurations": [
+        {
+            "name": "go-system-info",
+            "runtimeExecutable": "go",
+            "runtimeArgs": ["run", ".", "-p", "8222", "-r", "3s"],
+            "port": 8222
+        }
+    ]
+}

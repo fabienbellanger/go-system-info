@@ -90,8 +90,9 @@ Trois couches, découplées pour la testabilité :
       réseau (`netSampler`, 1 s), **E/S disque** (`diskIOSampler`, 1 s, agrégé
       toutes unités — même différenciation de compteurs cumulés que le réseau),
       processus (`procSampler`, 3 s), volumes montés (`diskSampler`, 5 s),
-      température (`tempSampler`, 5 s). `History()` expose un anneau circulaire
-      thread-safe (~120 points à 1/s, ~2 min) pour les sparklines.
+      température (`tempSampler`, 5 s), batterie (`batterySampler`, 10 s).
+      `History()` expose un anneau circulaire thread-safe (~120 points à 1/s,
+      ~2 min) pour les sparklines.
 
 - **`internal/server`** — serveur HTTP, routage et sérialisation JSON. Le
   collecteur est injecté derrière l'interface `systemCollector`, ce qui permet
@@ -152,6 +153,41 @@ Trois couches, découplées pour la testabilité :
       clé lisible et non aberrante de `cpuTempKeys`, ordonnée par préférence
       (proximité/die d'abord, sondes chaudes en dernier recours). Ne pas revenir à
       un max sur toutes les sondes.
+- **Batterie : gopsutil ne la couvre pas** — ses paquets s'arrêtent à cpu, disk,
+  host, load, mem, net, process et sensors. La lecture est donc faite par
+  plateforme, sans dépendance supplémentaire : `battery_darwin.go` (IOKit,
+  service `AppleSmartBattery`, via purego — pas de cgo), `battery_linux.go`
+  (`/sys/class/power_supply`), `battery_windows.go` (`GetSystemPowerStatus` :
+  charge, état et autonomie seulement — ni cycles ni santé, ils exigeraient WMI
+  `root\WMI`), `battery_other.go` (stub). Points à ne pas régresser :
+    - **Charge = `CurrentCapacity` / `MaxCapacity`**, jamais la valeur brute :
+      selon le modèle, `CurrentCapacity` est déjà un pourcentage (Apple Silicon,
+      `MaxCapacity` = 100) ou une capacité en mAh (Mac Intel). Le rapport couvre
+      les deux.
+    - **Santé** : `BatteryData/MaxCapacity` est préférée quand elle existe (≤ 100)
+      — c'est le pourcentage qu'affiche macOS dans Réglages ▸ Batterie ▸ État, et
+      il diffère d'un point du rapport brut `NominalChargeCapacity/DesignCapacity`
+      (99 % calculés contre 100 % affichés). Ne pas revenir au seul rapport brut,
+      qui contredirait le système.
+    - **Linux, unités** : les capacités sont en µWh (`energy_*`) ou en µAh
+      (`charge_*`) selon le pilote. Le temps restant se calcule **dans l'unité des
+      capacités** (µWh ÷ µW, ou µAh ÷ µA) ; mélanger des mAh et des watts donne une
+      autonomie fantaisiste. Les champs `*_mah` ne sont renseignés que pour les
+      pilotes en µAh (une énergie n'est pas convertible en mAh sans hypothèse).
+    - **IOKit ouvert une fois pour toutes** (`sync.Once`, jamais de `Dlclose`) :
+      gopsutil a constaté des SIGBUS/SIGSEGV quand le runtime Go interagit avec
+      des handles invalidés.
+    - **Front** : la carte est masquée (`hidden`) quand le champ `battery` est
+      absent, et la rangée de jauges passe alors de 4 à 3 cartes — d'où la grille
+      `.gauges` en `auto-fit`, avec des paliers explicites **4 → 2 → 1** colonnes
+      quand la batterie est présente (`:has(#bat-card:not([hidden]))`) : jamais de
+      rangée bancale « 3 + 1 ». Les couleurs de la batterie suivent **deux
+      registres** (`batteryColor`) : bleu d'accent dès que la machine est
+      alimentée (`charging`/`charged`/`ac`) — distinguer « sur secteur » de « sur
+      batterie » d'un coup d'œil —, et sinon une échelle d'autonomie
+      **inversée** (rouge sous 20 %, orange sous 40 %). D'où le paramètre
+      `color` de `updateGauge` : ne pas laisser `colorFor` teinter la jauge en
+      rouge à 95 % de charge.
 - **SSE et WriteTimeout** : `handleStream` neutralise le `WriteTimeout` du serveur
   pour la connexion longue via `http.NewResponseController`. Le `statusRecorder`
   implémente `Unwrap()` pour que `Flush`/`SetWriteDeadline` traversent le wrapper.
@@ -215,7 +251,8 @@ Trois couches, découplées pour la testabilité :
 ## Endpoints
 
 `/api/system` (JSON ponctuel — inclut notamment `cpu.per_core`/`cpu.temp_*`,
-`memory.swap_*`, `disk.fstype`, `disk_io` (débit d'E/S agrégé), `disks` (volumes)),
+`memory.swap_*`, `disk.fstype`, `disk_io` (débit d'E/S agrégé), `disks` (volumes),
+`battery` (omis sans batterie)),
 `/api/stream` (SSE `{system, history}`), `/api/history`,
 `/api/config` (`refresh_ms` et `readonly` pour le front), `/api/health`,
 `/api/version`, `POST /api/processes/kill` (termine des PID — **uniquement** ceux

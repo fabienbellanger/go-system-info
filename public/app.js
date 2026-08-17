@@ -43,11 +43,13 @@ function colorFor(pct) {
   return "var(--green)";
 }
 
-function updateGauge(prefix, pct, detail, sub) {
+// updateGauge met à jour une jauge circulaire. `color` permet d'imposer une
+// couleur : la batterie suit une échelle inversée (un niveau bas est une
+// alerte, contrairement à une utilisation CPU ou disque élevée).
+function updateGauge(prefix, pct, detail, sub, color = colorFor(pct)) {
   const value = document.getElementById(`${prefix}-value`);
   const arc = document.getElementById(`${prefix}-arc`);
   const det = document.getElementById(`${prefix}-detail`);
-  const color = colorFor(pct);
 
   value.textContent = pct.toFixed(0);
   arc.style.stroke = color;
@@ -149,6 +151,135 @@ function renderSwap(memory) {
   val.textContent = `${(memory.swap_used_gb || 0).toFixed(1)} / ${total.toFixed(1)} Go`;
   fill.style.width = `${pct}%`;
   fill.style.background = colorFor(pct);
+}
+
+// Seuils de charge de la batterie. Échelle inversée par rapport aux autres
+// jauges : c'est un niveau *bas* qui alerte.
+const BAT_CRIT_PCT = 20; // charge critique → rouge
+const BAT_WARN_PCT = 40; // charge faible → orange
+// Seuils de santé (capacité maximale restante) : en dessous de 80 %, macOS
+// comme les moniteurs usuels considèrent la batterie nettement usée.
+const HEALTH_WARN_PCT = 80;
+const HEALTH_CRIT_PCT = 60;
+
+// Libellés des états renvoyés par l'API (champ `state`).
+const BAT_STATE_LABELS = {
+  charging: "En charge",
+  charged: "Chargée · secteur",
+  ac: "Sur secteur",
+  discharging: "Sur batterie",
+};
+
+// batteryColor : couleur de l'anneau de charge. Deux registres distincts, pour
+// qu'un coup d'œil suffise à savoir si la machine est alimentée :
+//   - branchée (en charge, pleine ou charge en pause) → bleu d'accent, jamais
+//     d'alerte : le niveau n'a pas d'importance tant que le secteur est là ;
+//   - sur batterie → échelle d'autonomie verte / orange / rouge.
+function batteryColor(pct, state) {
+  if (state === "charging" || state === "charged" || state === "ac") return "var(--accent)";
+  if (pct <= BAT_CRIT_PCT) return "var(--red)";
+  if (pct <= BAT_WARN_PCT) return "var(--orange)";
+  return "var(--green)";
+}
+
+// healthColor : couleur de la santé, elle aussi sur une échelle inversée.
+function healthColor(pct) {
+  if (pct < HEALTH_CRIT_PCT) return "var(--red)";
+  if (pct < HEALTH_WARN_PCT) return "var(--orange)";
+  return "var(--green)";
+}
+
+// formatMinutes met en forme une durée exprimée en minutes (« 3 h 55 »).
+function formatMinutes(minutes) {
+  const h = Math.floor(minutes / 60);
+  const m = Math.round(minutes % 60);
+  return h > 0 ? `${h} h ${String(m).padStart(2, "0")}` : `${m} min`;
+}
+
+// batteryTimeLabel décrit l'autonomie restante (ou le temps de charge). Le
+// contrôleur met un moment à estimer cette valeur après un branchement (et ne
+// la fournit pas du tout sous Windows au secteur) : on l'annonce alors comme
+// telle plutôt que d'afficher un zéro trompeur. Libellés volontairement courts :
+// la carte est étroite (4 par rangée) et le détail doit tenir sur une ligne.
+function batteryTimeLabel(bat) {
+  const min = bat.time_remaining_minutes || 0;
+  if (min > 0) {
+    return bat.state === "charging" ? `Chargée dans ${formatMinutes(min)}` : `${formatMinutes(min)} d'autonomie`;
+  }
+  if (bat.state === "charged") return "Batterie pleine";
+  if (bat.state === "charging") return "Estimation en cours…";
+  return "Autonomie inconnue";
+}
+
+// renderBattery met à jour la carte Batterie, ou la masque quand la machine
+// n'en a pas (poste fixe, serveur, conteneur : le champ est alors absent du
+// flux). Les champs indisponibles selon la plateforme (Windows n'expose ni
+// cycles ni santé) masquent leur ligne plutôt que d'afficher un zéro.
+function renderBattery(bat) {
+  const card = document.getElementById("bat-card");
+  if (!card) return;
+  if (!bat) {
+    card.hidden = true;
+    return;
+  }
+  card.hidden = false;
+
+  const pct = Math.min(Math.max(bat.percent || 0, 0), 100);
+  const color = batteryColor(pct, bat.state);
+
+  // État affiché sous la jauge, dans le `sub` du détail : pastille + libellé,
+  // colorés comme l'anneau.
+  const state = document.createElement("span");
+  state.className = "bat-state";
+  state.style.color = color;
+  state.textContent = BAT_STATE_LABELS[bat.state] || "État inconnu";
+  updateGauge("bat", pct, batteryTimeLabel(bat), state, color);
+
+  // Cycles : rapportés au nombre prévu par le constructeur quand il est connu.
+  const cycles = bat.cycles || 0;
+  const design = bat.design_cycles || 0;
+  setMiniRow("bat-cycles", cycles > 0 ? (design > 0 ? `${cycles} / ${design}` : String(cycles)) : null);
+  if (cycles > 0 && design > 0) {
+    document.getElementById("bat-cycles-row").title =
+      `${((cycles / design) * 100).toFixed(0)} % des ${design} cycles de charge prévus par le constructeur`;
+  }
+
+  setMiniRow("bat-power", bat.power_watts > 0 ? `${bat.power_watts.toFixed(1)} W` : null);
+  setMiniRow("bat-temp", bat.temp_celsius > 0 ? `${bat.temp_celsius.toFixed(0)} °C` : null);
+
+  // Santé : capacité maximale actuelle rapportée à la capacité d'origine.
+  const health = bat.health_percent || 0;
+  const healthBlock = document.getElementById("bat-health-block");
+  if (health > 0) {
+    healthBlock.hidden = false;
+    const val = document.getElementById("bat-health");
+    val.textContent = `${health.toFixed(0)} %`;
+    val.style.color = healthColor(health);
+    if (bat.full_capacity_mah > 0 && bat.design_capacity_mah > 0) {
+      healthBlock.title = `Capacité maximale ${bat.full_capacity_mah} mAh sur ${bat.design_capacity_mah} mAh d'origine`;
+    }
+    const fill = document.getElementById("bat-health-fill");
+    fill.style.width = `${Math.min(health, 100)}%`;
+    fill.style.background = healthColor(health);
+  } else {
+    healthBlock.hidden = true;
+  }
+
+  document.getElementById("bat-alert").hidden = bat.condition !== "service";
+}
+
+// setMiniRow renseigne une ligne d'info complémentaire, ou masque toute la
+// ligne (label compris) quand la valeur est indisponible sur la plateforme.
+function setMiniRow(valueId, text) {
+  const val = document.getElementById(valueId);
+  if (!val) return;
+  const row = val.closest(".mini-row");
+  if (text === null) {
+    if (row) row.hidden = true;
+    return;
+  }
+  if (row) row.hidden = false;
+  val.textContent = text;
 }
 
 // updateTitle reflète les mesures CPU/RAM dans le titre de l'onglet (utile quand
@@ -871,6 +1002,7 @@ function applyState(state) {
     `${data.memory.free_gb.toFixed(1)} Go libres`,
   );
   renderSwap(data.memory);
+  renderBattery(data.battery);
 
   // Titre d'onglet dynamique (CPU/RAM), avec alerte au-delà du seuil critique.
   updateTitle(data.cpu.used_percent, data.memory.used_percent);

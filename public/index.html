@@ -22,100 +22,148 @@
             </header>
 
             <div class="grid">
-                <!-- CPU — ancre native : cliquer fait défiler jusqu'à la carte
-                     Processus (défilement doux via scroll-behavior CSS). -->
-                <a
-                    class="card card-gauge card-link"
-                    id="cpu-card"
-                    href="#proc-card"
-                    title="Voir les processus"
-                    aria-label="Processeur — aller à la liste des processus"
-                >
-                    <div class="card-title"><span class="icon">⚙️</span> Processeur</div>
-                    <div class="gauge-wrap">
-                        <div class="gauge">
-                            <svg viewBox="0 0 150 150">
-                                <title>Jauge d'utilisation du processeur</title>
-                                <circle class="track" cx="75" cy="75" r="60" />
-                                <circle class="progress" id="cpu-arc" cx="75" cy="75" r="60" />
-                            </svg>
-                            <div class="gauge-center">
-                                <div class="gauge-value"><span id="cpu-value">—</span><span class="pct">%</span></div>
-                                <div class="gauge-label">CPU</div>
+                <!-- Rangée des jauges : la carte Batterie n'apparaît que sur les
+                     machines qui en ont une, d'où une grille auto-ajustée (3 ou
+                     4 cartes) plutôt qu'un nombre de colonnes figé. -->
+                <div class="gauges">
+                    <!-- CPU — ancre native : cliquer fait défiler jusqu'à la carte
+                         Processus (défilement doux via scroll-behavior CSS). -->
+                    <a
+                        class="card card-gauge card-link"
+                        id="cpu-card"
+                        href="#proc-card"
+                        title="Voir les processus"
+                        aria-label="Processeur — aller à la liste des processus"
+                    >
+                        <div class="card-title"><span class="icon">⚙️</span> Processeur</div>
+                        <div class="gauge-wrap">
+                            <div class="gauge">
+                                <svg viewBox="0 0 150 150">
+                                    <title>Jauge d'utilisation du processeur</title>
+                                    <circle class="track" cx="75" cy="75" r="60" />
+                                    <circle class="progress" id="cpu-arc" cx="75" cy="75" r="60" />
+                                </svg>
+                                <div class="gauge-center">
+                                    <div class="gauge-value"><span id="cpu-value">—</span><span class="pct">%</span></div>
+                                    <div class="gauge-label">CPU</div>
+                                </div>
                             </div>
                         </div>
-                    </div>
-                    <div class="detail" id="cpu-detail">—</div>
-                    <svg class="sparkline" id="cpu-spark" viewBox="0 0 100 28" preserveAspectRatio="none">
-                        <title>Évolution récente de l'utilisation du processeur</title>
-                        <polygon class="spark-area" id="cpu-spark-area" points="" />
-                        <polyline class="spark-line" id="cpu-spark-line" points="" />
-                    </svg>
-                    <div class="cpu-cores" id="cpu-cores" role="img" aria-label="Utilisation par cœur"></div>
-                    <div class="cpu-temp" id="cpu-temp" hidden></div>
-                </a>
+                        <div class="detail" id="cpu-detail">—</div>
+                        <svg class="sparkline" id="cpu-spark" viewBox="0 0 100 28" preserveAspectRatio="none">
+                            <title>Évolution récente de l'utilisation du processeur</title>
+                            <polygon class="spark-area" id="cpu-spark-area" points="" />
+                            <polyline class="spark-line" id="cpu-spark-line" points="" />
+                        </svg>
+                        <div class="cpu-cores" id="cpu-cores" role="img" aria-label="Utilisation par cœur"></div>
+                        <div class="cpu-temp" id="cpu-temp" hidden></div>
+                    </a>
 
-                <!-- RAM -->
-                <div class="card card-gauge">
-                    <div class="card-title"><span class="icon">🧠</span> Mémoire vive</div>
-                    <div class="gauge-wrap">
-                        <div class="gauge">
-                            <svg viewBox="0 0 150 150">
-                                <title>Jauge d'utilisation de la mémoire vive</title>
-                                <circle class="track" cx="75" cy="75" r="60" />
-                                <circle class="progress" id="mem-arc" cx="75" cy="75" r="60" />
-                            </svg>
-                            <div class="gauge-center">
-                                <div class="gauge-value"><span id="mem-value">—</span><span class="pct">%</span></div>
-                                <div class="gauge-label">RAM</div>
+                    <!-- RAM -->
+                    <div class="card card-gauge">
+                        <div class="card-title"><span class="icon">🧠</span> Mémoire vive</div>
+                        <div class="gauge-wrap">
+                            <div class="gauge">
+                                <svg viewBox="0 0 150 150">
+                                    <title>Jauge d'utilisation de la mémoire vive</title>
+                                    <circle class="track" cx="75" cy="75" r="60" />
+                                    <circle class="progress" id="mem-arc" cx="75" cy="75" r="60" />
+                                </svg>
+                                <div class="gauge-center">
+                                    <div class="gauge-value"><span id="mem-value">—</span><span class="pct">%</span></div>
+                                    <div class="gauge-label">RAM</div>
+                                </div>
                             </div>
                         </div>
-                    </div>
-                    <div class="detail" id="mem-detail">—</div>
-                    <svg class="sparkline" id="mem-spark" viewBox="0 0 100 28" preserveAspectRatio="none">
-                        <title>Évolution récente de l'utilisation de la mémoire vive</title>
-                        <polygon class="spark-area" id="mem-spark-area" points="" />
-                        <polyline class="spark-line" id="mem-spark-line" points="" />
-                    </svg>
-                    <div class="card-extra" id="mem-extra">
-                        <div class="mini-row">
-                            <span class="mini-label">🔄 Swap</span>
-                            <span class="mini-val" id="mem-swap-val">—</span>
+                        <div class="detail" id="mem-detail">—</div>
+                        <svg class="sparkline" id="mem-spark" viewBox="0 0 100 28" preserveAspectRatio="none">
+                            <title>Évolution récente de l'utilisation de la mémoire vive</title>
+                            <polygon class="spark-area" id="mem-spark-area" points="" />
+                            <polyline class="spark-line" id="mem-spark-line" points="" />
+                        </svg>
+                        <div class="card-extra" id="mem-extra">
+                            <div class="mini-row">
+                                <span class="mini-label">🔄 Swap</span>
+                                <span class="mini-val" id="mem-swap-val">—</span>
+                            </div>
+                            <div class="mini-bar" id="mem-swap-bar"><span class="mini-bar-fill" id="mem-swap-fill"></span></div>
                         </div>
-                        <div class="mini-bar" id="mem-swap-bar"><span class="mini-bar-fill" id="mem-swap-fill"></span></div>
                     </div>
-                </div>
 
-                <!-- Disque -->
-                <div class="card card-gauge">
-                    <div class="card-title"><span class="icon">🗄️</span> Disque</div>
-                    <div class="gauge-wrap">
-                        <div class="gauge">
-                            <svg viewBox="0 0 150 150">
-                                <title>Jauge d'utilisation du disque</title>
-                                <circle class="track" cx="75" cy="75" r="60" />
-                                <circle class="progress" id="disk-arc" cx="75" cy="75" r="60" />
-                            </svg>
-                            <div class="gauge-center">
-                                <div class="gauge-value"><span id="disk-value">—</span><span class="pct">%</span></div>
-                                <div class="gauge-label">Disque</div>
+                    <!-- Disque -->
+                    <div class="card card-gauge">
+                        <div class="card-title"><span class="icon">🗄️</span> Disque</div>
+                        <div class="gauge-wrap">
+                            <div class="gauge">
+                                <svg viewBox="0 0 150 150">
+                                    <title>Jauge d'utilisation du disque</title>
+                                    <circle class="track" cx="75" cy="75" r="60" />
+                                    <circle class="progress" id="disk-arc" cx="75" cy="75" r="60" />
+                                </svg>
+                                <div class="gauge-center">
+                                    <div class="gauge-value"><span id="disk-value">—</span><span class="pct">%</span></div>
+                                    <div class="gauge-label">Disque</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="detail" id="disk-detail">—</div>
+                        <select class="vol-select" id="disk-select" aria-label="Choisir le volume à afficher" hidden></select>
+                        <div class="card-extra" id="disk-extra">
+                            <div class="mini-row">
+                                <span class="mini-label">Système de fichiers</span>
+                                <span class="mini-val" id="disk-fstype">—</span>
+                            </div>
+                            <div class="mini-row">
+                                <span class="mini-label">⬇️ Lecture</span>
+                                <span class="mini-val" id="disk-read">—</span>
+                            </div>
+                            <div class="mini-row">
+                                <span class="mini-label">⬆️ Écriture</span>
+                                <span class="mini-val" id="disk-write">—</span>
                             </div>
                         </div>
                     </div>
-                    <div class="detail" id="disk-detail">—</div>
-                    <select class="vol-select" id="disk-select" aria-label="Choisir le volume à afficher" hidden></select>
-                    <div class="card-extra" id="disk-extra">
-                        <div class="mini-row">
-                            <span class="mini-label">Système de fichiers</span>
-                            <span class="mini-val" id="disk-fstype">—</span>
+
+                    <!-- Batterie — masquée tant que le serveur n'en signale aucune
+                         (poste fixe, serveur, conteneur) ; app.js la révèle au
+                         premier relevé qui en contient une. -->
+                    <div class="card card-gauge" id="bat-card" hidden>
+                        <div class="card-title"><span class="icon">🔋</span> Batterie</div>
+                        <div class="gauge-wrap">
+                            <div class="gauge">
+                                <svg viewBox="0 0 150 150">
+                                    <title>Jauge de charge de la batterie</title>
+                                    <circle class="track" cx="75" cy="75" r="60" />
+                                    <circle class="progress" id="bat-arc" cx="75" cy="75" r="60" />
+                                </svg>
+                                <div class="gauge-center">
+                                    <div class="gauge-value"><span id="bat-value">—</span><span class="pct">%</span></div>
+                                    <div class="gauge-label">Batterie</div>
+                                </div>
+                            </div>
                         </div>
-                        <div class="mini-row">
-                            <span class="mini-label">⬇️ Lecture</span>
-                            <span class="mini-val" id="disk-read">—</span>
-                        </div>
-                        <div class="mini-row">
-                            <span class="mini-label">⬆️ Écriture</span>
-                            <span class="mini-val" id="disk-write">—</span>
+                        <div class="detail" id="bat-detail">—</div>
+                        <div class="bat-alert" id="bat-alert" hidden>⚠️ Entretien recommandé</div>
+                        <div class="card-extra" id="bat-extra">
+                            <div class="mini-row" id="bat-cycles-row">
+                                <span class="mini-label">🔁 Cycles</span>
+                                <span class="mini-val" id="bat-cycles">—</span>
+                            </div>
+                            <div class="mini-row" id="bat-power-row">
+                                <span class="mini-label">⚡ Puissance</span>
+                                <span class="mini-val" id="bat-power">—</span>
+                            </div>
+                            <div class="mini-row" id="bat-temp-row">
+                                <span class="mini-label">🌡️ Température</span>
+                                <span class="mini-val" id="bat-temp">—</span>
+                            </div>
+                            <div id="bat-health-block">
+                                <div class="mini-row">
+                                    <span class="mini-label">💚 Santé</span>
+                                    <span class="mini-val" id="bat-health">—</span>
+                                </div>
+                                <div class="mini-bar"><span class="mini-bar-fill" id="bat-health-fill"></span></div>
+                            </div>
                         </div>
                     </div>
                 </div>

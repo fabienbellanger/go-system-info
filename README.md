@@ -18,15 +18,19 @@ est séparée du serveur HTTP et du routage (`internal/server`).
 
 ## Aperçu
 
-- 🖥️ Tableau de bord : trois cartes-jauges (Processeur, Mémoire vive, Disque),
-  une **bande d'état** compacte (Réseau + Hôte) et la carte **Processus** — un
-  clic sur la carte Processeur fait glisser la page jusqu'aux processus
+- 🖥️ Tableau de bord : des cartes-jauges (Processeur, Mémoire vive, Disque, et
+  Batterie sur les portables), une **bande d'état** compacte (Réseau + Hôte) et
+  la carte **Processus** — un clic sur la carte Processeur fait glisser la page
+  jusqu'aux processus
 - 📊 Jauges colorées selon le niveau d'utilisation (vert < 70 %, orange ≥ 70 %, rouge ≥ 90 %)
 - 📈 Sparklines : courbes d'évolution CPU/RAM sur ~2 min (historique côté serveur)
 - 🧮 Grille d'utilisation **par cœur** et **température** (capteur le plus chaud, si disponible)
 - 🔔 Titre d'onglet dynamique (CPU/RAM), préfixé d'un ⚠️ au-delà du seuil critique
 - 🗂️ **Sélecteur de volume** disque (choix parmi les volumes montés), avec **système de fichiers** et **débit d'E/S** (lecture/écriture)
 - 💾 **Swap** (mémoire d'échange) sur la carte Mémoire
+- 🔋 **Batterie** : charge, état (en charge / sur secteur / sur batterie),
+  autonomie estimée, **cycles**, **santé**, puissance et température — carte
+  automatiquement masquée sur les machines sans batterie
 - 🔎 Liste de processus avec **recherche** par nom et **tri** (nom / valeur, ↑↓)
 - 🌐 Métriques étendues : charge moyenne (load average) et débit réseau (↑/↓ + totaux)
 - 🔌 Push **temps réel** via Server-Sent Events (plus de polling)
@@ -442,6 +446,19 @@ curl http://localhost:8222/api/system
     "recv_total_bytes": 594250003,
     "sent_total_bytes": 96421144
   },
+  "battery": {
+    "percent": 66,
+    "state": "discharging",
+    "cycles": 71,
+    "design_cycles": 1000,
+    "health_percent": 100,
+    "full_capacity_mah": 4540,
+    "design_capacity_mah": 4563,
+    "time_remaining_minutes": 304,
+    "power_watts": 6.38,
+    "temp_celsius": 30.1,
+    "condition": "normal"
+  },
   "processes": {
     "top_cpu": [
       {
@@ -500,6 +517,23 @@ curl http://localhost:8222/api/system
 - **`net`** : activité réseau agrégée sur toutes les interfaces — débit
   instantané (octets/s) calculé en différenciant les compteurs cumulés, et
   volumes totaux reçus/émis depuis le démarrage.
+- **`battery`** : état de la batterie principale. Champ **entièrement omis** sur
+  une machine qui n'en a pas (poste fixe, serveur, conteneur) : l'interface
+  masque alors la carte. `state` vaut `charging` (en charge), `discharging` (sur
+  batterie), `charged` (pleine, secteur branché) ou `ac` (branché, charge en
+  pause — courant avec la charge optimisée de macOS). `health_percent` est la
+  capacité maximale actuelle rapportée à la capacité d'origine (plafonnée à
+  100 %, comme l'affiche macOS), `cycles` / `design_cycles` le nombre de cycles
+  de charge effectués et celui prévu par le constructeur, `power_watts` la
+  puissance instantanée (valeur absolue — le sens est donné par `state`),
+  `time_remaining_minutes` l'autonomie ou le temps de charge restant estimé
+  (`0` tant que le contrôleur ne sait pas l'évaluer), et `condition` vaut
+  `service` quand le contrôleur signale une défaillance. **La couverture dépend
+  de la plateforme** : macOS (IOKit, `AppleSmartBattery`) et Linux
+  (`/sys/class/power_supply`) fournissent tout ; **Windows**
+  (`GetSystemPowerStatus`) n'expose que la charge, l'état et l'autonomie — ni
+  cycles ni santé (ils demanderaient les classes WMI `root\WMI`). Les champs
+  indisponibles sont omis et l'interface masque la ligne correspondante.
 - **`processes`** : les deux classements (`top_cpu`, `top_mem`) des 10 plus gros
   consommateurs. Les processus sont **regroupés par application** : chaque
   processus est rattaché à son ancêtre de plus haut niveau (le processus dont le
@@ -717,6 +751,8 @@ systeminfo/
 ├── internal/
 │   ├── sysinfo/
 │   │   ├── sysinfo.go         # Collecte des métriques (CPU, charge, mémoire, disque, réseau, hôte)
+│   │   ├── temp_*.go          # Température CPU : gopsutil, ou lecture SMC directe sur Mac Intel
+│   │   ├── battery*.go        # Batterie par plateforme (IOKit / sysfs / GetSystemPowerStatus)
 │   │   └── sysinfo_test.go    # Tests + benchmarks du package sysinfo
 │   └── server/
 │       ├── server.go          # Serveur HTTP, routage, API REST et flux SSE
@@ -774,7 +810,13 @@ systeminfo/
 
 - [`github.com/shirou/gopsutil/v4`](https://github.com/shirou/gopsutil) —
   collecte multiplateforme des métriques système (CPU, charge, mémoire, disque,
-  réseau, hôte).
+  réseau, hôte, capteurs, processus).
+- [`github.com/ebitengine/purego`](https://github.com/ebitengine/purego) —
+  appels aux bibliothèques système macOS **sans cgo** (`CGO_ENABLED=0` reste
+  valable) : IOKit pour la batterie, et le SMC pour la température des Mac Intel.
+  gopsutil ne couvrant pas la batterie, celle-ci est lue directement : IOKit sur
+  macOS, `/sys/class/power_supply` sous Linux, `GetSystemPowerStatus` sous
+  Windows — sans dépendance supplémentaire.
 
 ## Personnalisation
 

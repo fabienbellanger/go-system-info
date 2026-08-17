@@ -250,17 +250,27 @@ header {
 }
 
 /* ---------- Grid & Cards ---------- */
+/* Empilement vertical des blocs : rangée de jauges, bande Réseau + Hôte, puis
+   la carte Processus — chacun occupant toute la largeur. */
 .grid {
     display: grid;
-    grid-template-columns: repeat(6, 1fr);
+    grid-template-columns: 1fr;
     gap: 1.4rem;
 }
 
-/* Jauges (CPU, RAM, Disque) : trois cartes sur une rangée. Dessous, Réseau et
-   Hôte sont fusionnés en une bande compacte pleine largeur (.card-strip), pour
-   que la carte Processus remonte au plus près des jauges. */
+/* Rangée des jauges (CPU, RAM, Disque, et Batterie sur les portables). Le
+   nombre de colonnes s'ajuste à la largeur disponible ET au nombre de cartes
+   présentes : `auto-fit` étale toujours les cartes sur toute la largeur, là où
+   un nombre de colonnes figé laisserait un vide sur les machines sans
+   batterie (poste fixe, serveur) — et gère au passage les écrans étroits sans
+   media query. */
+.gauges {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 1.4rem;
+}
+
 .card-gauge {
-    grid-column: span 2;
     /* Cartes-jauges d'une même rangée à hauteur égale (étirées à la plus haute) ;
        colonne flex pour que le contenu variable (sparkline, cœurs…) puisse
        occuper la hauteur excédentaire. Les jauges circulaires restent en haut,
@@ -274,7 +284,6 @@ header {
    étalées sur la largeur). Padding vertical réduit : c'est une bande d'état,
    pas une carte. */
 .card-strip {
-    grid-column: span 6;
     display: grid;
     grid-template-columns: repeat(4, auto);
     justify-content: space-between;
@@ -283,36 +292,34 @@ header {
     padding: 1.05rem 1.6rem;
 }
 
-/* Carte pleine largeur (liste des processus) : occupe toute la rangée. */
-.card-full {
-    grid-column: span 6;
+/* Quatre cartes (machine avec batterie) : jamais de rangée bancale « 3 + 1 ».
+   On passe donc directement de 4 colonnes à 2 (carré 2 × 2), puis à 1, au lieu
+   de laisser `auto-fit` s'arrêter au passage sur 3 colonnes. Le sélecteur ne
+   vise que le cas où la carte Batterie est réellement affichée : sans elle, les
+   trois cartes restantes gardent le comportement auto-ajusté ci-dessus. */
+.gauges:has(#bat-card:not([hidden])) {
+    grid-template-columns: repeat(4, 1fr);
+}
+
+@media (max-width: 1060px) {
+    .gauges:has(#bat-card:not([hidden])) {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (max-width: 560px) {
+    .gauges:has(#bat-card:not([hidden])) {
+        grid-template-columns: 1fr;
+    }
 }
 
 @media (max-width: 900px) {
-    .grid {
-        grid-template-columns: repeat(2, 1fr);
-    }
-    .card-gauge {
-        grid-column: span 1;
-    }
-    .card-strip,
-    .card-full {
-        grid-column: span 2; /* occupent la rangée en entier */
-    }
     .card-strip {
         grid-template-columns: repeat(3, auto);
     }
 }
 
 @media (max-width: 560px) {
-    .grid {
-        grid-template-columns: 1fr;
-    }
-    .card-gauge,
-    .card-strip,
-    .card-full {
-        grid-column: span 1;
-    }
     .card-strip {
         grid-template-columns: repeat(2, auto);
     }
@@ -337,17 +344,22 @@ header {
     animation: rise 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-.card:nth-child(2) {
+/* Apparition en cascade : les jauges d'abord, de gauche à droite, puis la bande
+   d'état et la liste des processus. */
+.gauges .card:nth-child(2) {
     animation-delay: 0.07s;
 }
-.card:nth-child(3) {
+.gauges .card:nth-child(3) {
     animation-delay: 0.14s;
 }
-.card:nth-child(4) {
+.gauges .card:nth-child(4) {
     animation-delay: 0.21s;
 }
-.card:nth-child(5) {
+.card-strip {
     animation-delay: 0.28s;
+}
+.card-full {
+    animation-delay: 0.35s;
 }
 
 @keyframes rise {
@@ -1142,6 +1154,37 @@ header {
         background 0.5s ease;
 }
 
+/* ---------- Carte Batterie ---------- */
+/* État de charge affiché sous la jauge (dans le `sub` du détail, comme le
+   modèle de CPU ou le point de montage) : pastille colorée + libellé. La
+   couleur est posée par app.js, en cohérence avec l'anneau. */
+.bat-state {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.bat-state::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+/* Avertissement du contrôleur (batterie à faire remplacer) : rare, donc affiché
+   franchement plutôt que caché dans une infobulle. */
+.bat-alert {
+    margin-top: 0.6rem;
+    text-align: center;
+    font-size: 0.74rem;
+    color: var(--red);
+    background: rgba(255, 107, 107, 0.09);
+    border: 1px solid rgba(255, 107, 107, 0.25);
+    border-radius: 8px;
+    padding: 0.25rem 0.5rem;
+}
+
 /* ---------- Sélecteur de volume (carte Disque) ---------- */
 .vol-select {
     display: block;
@@ -1254,6 +1297,7 @@ header {
 .offline .cpu-cores,
 .offline .cpu-temp,
 .offline .card-extra,
+.offline .bat-alert,
 .offline .proc-list {
     filter: grayscale(0.9);
     opacity: 0.45;

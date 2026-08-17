@@ -90,6 +90,10 @@ type Info struct {
 	Disks  []Disk `json:"disks,omitempty"`
 	DiskIO DiskIO `json:"disk_io"`
 	Net    Net    `json:"net"`
+	// Battery est absente des machines sans batterie (poste fixe, serveur,
+	// conteneur) et des plateformes qui ne l'exposent pas : le champ est alors
+	// omis du JSON et l'interface masque la carte.
+	Battery *Battery `json:"battery,omitempty"`
 	// Processes est renseigné par le Collector mis en cache ; un relevé ponctuel
 	// (fonction Collect libre) le laisse nil, auquel cas le champ est omis du JSON.
 	Processes *Processes `json:"processes,omitempty"`
@@ -231,6 +235,9 @@ func collect(cpuUsed float64, netRate Net) (*Info, error) {
 	if err := info.collectDisk(defaultDiskPath()); err != nil {
 		return nil, err
 	}
+	// La batterie est un relevé instantané (aucun delta à calculer) : elle a donc
+	// sa place jusque dans un relevé ponctuel, contrairement aux processus.
+	info.Battery = readBattery()
 
 	return info, nil
 }
@@ -246,6 +253,7 @@ type Collector struct {
 	proc        procSampler
 	disks       diskSampler // liste des volumes montés (sélecteur de disque)
 	temp        tempSampler // température (capteur le plus chaud, best-effort)
+	battery     batterySampler
 	history     *history
 	currentUser string // propriétaire du serveur, résolu une fois au démarrage
 	diskPath    string // volume surveillé, résolu une fois au démarrage
@@ -311,6 +319,7 @@ func (c *Collector) Start(ctx context.Context) {
 	go c.proc.run(ctx, c.currentUser)
 	go c.disks.run(ctx, c.diskPath)
 	go c.temp.run(ctx)
+	go c.battery.run(ctx)
 	go c.recordHistory(ctx)
 }
 
@@ -366,6 +375,7 @@ func (c *Collector) assemble() (*Info, error) {
 	info.Disks = c.disks.get()
 	info.DiskIO = c.diskIO.get()
 	info.Processes = c.proc.get()
+	info.Battery = c.battery.get()
 	return info, nil
 }
 
