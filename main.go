@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"log/slog"
 	"os"
 	"time"
 
+	"gosysteminfo/internal/logging"
 	"gosysteminfo/internal/server"
 )
 
@@ -38,11 +40,18 @@ var publicFS embed.FS
 var version = "dev"
 
 func main() {
-	cfg, err := parseFlags(os.Args[0], os.Args[1:], os.Stderr)
+	opts, err := parseFlags(os.Args[0], os.Args[1:], os.Stderr)
 	if err != nil {
 		// flag.ContinueOnError a déjà écrit l'erreur et l'usage.
 		os.Exit(2)
 	}
+
+	if opts.LogPath != "" {
+		closeLog := setupFileLogging(opts.LogPath)
+		defer closeLog()
+	}
+
+	cfg := opts.Config
 	cfg.Version = version
 
 	// Le contenu statique est servi depuis le sous-dossier "public" embarqué.
@@ -59,14 +68,50 @@ func main() {
 	}
 }
 
+// options rassemble la configuration issue de la ligne de commande : celle du
+// serveur, et ce qui ne concerne que le processus lui-même.
+type options struct {
+	server.Config
+
+	// LogPath est le fichier de journal (flag -log). Vide = sortie d'erreur
+	// standard, captée par le gestionnaire de service (launchd, systemd, Docker).
+	LogPath string
+}
+
+// setupFileLogging redirige la journalisation vers le fichier tournant path et
+// renvoie la fonction de fermeture.
+//
+// slog n'est pas reconfiguré : son handler par défaut écrit via le logger
+// standard, donc rediriger celui-ci suffit et préserve le format des messages.
+// Bonus : les paniques rattrapées par net/http dans un handler passent aussi par
+// log.Printf, et atterrissent donc dans le même journal. Seules les paniques
+// fatales du runtime restent écrites directement sur la sortie d'erreur.
+func setupFileLogging(path string) func() {
+	lf, err := logging.Open(path, logging.DefaultMaxBytes, logging.DefaultKeep)
+	if err != nil {
+		// Un journal inaccessible ne doit pas empêcher le service de tourner :
+		// on reste sur la sortie d'erreur.
+		slog.Warn("journalisation dans un fichier impossible, repli sur la sortie d'erreur",
+			"chemin", path, "err", err)
+		return func() {}
+	}
+	log.SetOutput(lf)
+	slog.Info("journalisation dans un fichier",
+		"chemin", lf.Path(), "taille_max", logging.DefaultMaxBytes, "archives", logging.DefaultKeep)
+	return func() { _ = lf.Close() }
+}
+
 // parseFlags analyse les arguments de ligne de commande et renvoie la
 // configuration correspondante. Isolé de main pour être testable sans toucher
 // à l'état global de flag.CommandLine. out reçoit les messages d'erreur/usage.
-func parseFlags(name string, args []string, out io.Writer) (server.Config, error) {
+func parseFlags(name string, args []string, out io.Writer) (options, error) {
 	flags := flag.NewFlagSet(name, flag.ContinueOnError)
 	flags.SetOutput(out)
 
-	var cfg server.Config
+	var opts options
+	cfg := &opts.Config
+	flags.StringVar(&opts.LogPath, "log", "",
+		"Fichier de journal (rotation automatique). Vide = sortie d'erreur standard")
 	flags.StringVar(&cfg.Host, "host", "",
 		"Adresse d'écoute (ex. 127.0.0.1 pour la seule machine locale ; vide = toutes les interfaces)")
 	flags.IntVar(&cfg.Port, "p", defaultPort, "Port d'écoute du serveur HTTP")
@@ -80,21 +125,21 @@ func parseFlags(name string, args []string, out io.Writer) (server.Config, error
 		"Noms d'hôte de confiance supplémentaires (séparés par des virgules) acceptés dans l'en-tête Host, en plus de localhost, du nom de la machine et des adresses IP")
 
 	if err := flags.Parse(args); err != nil {
-		return server.Config{}, err
+		return options{}, err
 	}
 
 	// Validation : une configuration invalide doit échouer au démarrage plutôt
 	// que de provoquer un comportement dégradé (ex. panique de time.NewTicker
 	// sur un intervalle nul, cf. flux SSE) ou une adresse d'écoute absurde.
 	if cfg.Port < 1 || cfg.Port > 65535 {
-		return server.Config{}, reportErr(out,
+		return options{}, reportErr(out,
 			fmt.Errorf("port invalide : %d (attendu entre 1 et 65535)", cfg.Port))
 	}
 	if cfg.Refresh < minRefreshInterval {
-		return server.Config{}, reportErr(out,
+		return options{}, reportErr(out,
 			fmt.Errorf("intervalle de rafraîchissement invalide : %s (minimum %s)", cfg.Refresh, minRefreshInterval))
 	}
-	return cfg, nil
+	return opts, nil
 }
 
 // reportErr écrit err sur out (comme le fait flag pour ses propres erreurs) puis

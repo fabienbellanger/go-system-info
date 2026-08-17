@@ -4,8 +4,10 @@ package sysinfo
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os/user"
 	"runtime"
+	"runtime/debug"
 	"slices"
 	"sort"
 	"strconv"
@@ -311,16 +313,80 @@ func defaultDiskPath() string {
 // Start lance, en arrière-plan et jusqu'à l'annulation de ctx, l'échantillonnage
 // CPU et l'enregistrement de l'historique. À appeler une seule fois avant de
 // servir des requêtes.
+//
+// Chaque sampler est supervisé (cf. supervise) : une panique dans un relevé
+// dégrade la métrique concernée au lieu d'emporter tout le serveur.
 func (c *Collector) Start(ctx context.Context) {
-	go c.cpu.run(ctx)
-	go c.core.run(ctx)
-	go c.net.run(ctx)
-	go c.diskIO.run(ctx)
-	go c.proc.run(ctx, c.currentUser)
-	go c.disks.run(ctx, c.diskPath)
-	go c.temp.run(ctx)
-	go c.battery.run(ctx)
-	go c.recordHistory(ctx)
+	supervise(ctx, "cpu", c.cpu.run)
+	supervise(ctx, "cœurs", c.core.run)
+	supervise(ctx, "réseau", c.net.run)
+	supervise(ctx, "e/s disque", c.diskIO.run)
+	supervise(ctx, "processus", func(ctx context.Context) { c.proc.run(ctx, c.currentUser) })
+	supervise(ctx, "volumes", func(ctx context.Context) { c.disks.run(ctx, c.diskPath) })
+	supervise(ctx, "température", c.temp.run)
+	supervise(ctx, "batterie", c.battery.run)
+	supervise(ctx, "historique", c.recordHistory)
+}
+
+const (
+	// samplerRestartDelay est le délai d'attente avant de relancer un sampler qui
+	// a paniqué : s'il s'agit d'un état système transitoire, il a le temps de
+	// s'apaiser, et une panique systématique ne tourne pas en boucle serrée.
+	samplerRestartDelay = 5 * time.Second
+
+	// samplerMaxPanics borne le nombre de tentatives : au-delà, la panique est
+	// manifestement déterministe (plateforme non gérée, capteur défaillant) et on
+	// abandonne définitivement cette métrique — l'interface masque simplement le
+	// champ, le reste du serveur continue.
+	samplerMaxPanics = 5
+)
+
+// supervise exécute fn dans une goroutine dédiée en interceptant ses paniques.
+//
+// Sans cela, une panique dans un relevé (les capteurs SMC/IOKit, l'énumération
+// des processus et les compteurs système dépendent fortement de la plateforme)
+// tuerait le processus entier, service web compris. La goroutine est relancée
+// après samplerRestartDelay, au plus samplerMaxPanics fois. À noter : cela ne
+// couvre que les paniques Go — un SIGSEGV levé dans du code natif appelé via
+// purego reste fatal.
+func supervise(ctx context.Context, name string, fn func(context.Context)) {
+	superviseWith(ctx, name, samplerRestartDelay, fn)
+}
+
+// superviseWith est supervise avec un délai de relance explicite, pour que les
+// tests n'aient pas à attendre samplerRestartDelay.
+func superviseWith(ctx context.Context, name string, restartDelay time.Duration, fn func(context.Context)) {
+	go func() {
+		for attempt := 1; ; attempt++ {
+			if !runGuarded(ctx, name, fn) {
+				return // sortie normale : ctx annulé, ou sampler qui s'arrête de lui-même
+			}
+			if attempt >= samplerMaxPanics {
+				slog.Error("sampler abandonné après des paniques répétées",
+					"sampler", name, "paniques", attempt)
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(restartDelay):
+			}
+		}
+	}()
+}
+
+// runGuarded exécute fn et renvoie true si elle a paniqué — la panique est alors
+// journalisée avec sa pile, seule trace utilisable pour diagnostiquer après coup.
+func runGuarded(ctx context.Context, name string, fn func(context.Context)) (panicked bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			panicked = true
+			slog.Error("panique dans un sampler (relevé abandonné)",
+				"sampler", name, "panique", fmt.Sprint(r), "pile", string(debug.Stack()))
+		}
+	}()
+	fn(ctx)
+	return false
 }
 
 // Collect renvoie les métriques courantes en réutilisant les mesures CPU, réseau

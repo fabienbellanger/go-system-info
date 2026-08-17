@@ -2,6 +2,11 @@ package main
 
 import (
 	"io"
+	"log"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -46,6 +51,24 @@ func TestParseFlags(t *testing.T) {
 		}
 	})
 
+	t.Run("fichier de journal", func(t *testing.T) {
+		cfg, err := parseFlags("test", nil, io.Discard)
+		if err != nil {
+			t.Fatalf("erreur inattendue : %v", err)
+		}
+		if cfg.LogPath != "" {
+			t.Errorf("LogPath = %q, attendu vide par défaut (sortie d'erreur)", cfg.LogPath)
+		}
+
+		cfg, err = parseFlags("test", []string{"-log", "/var/log/app.log"}, io.Discard)
+		if err != nil {
+			t.Fatalf("erreur inattendue : %v", err)
+		}
+		if cfg.LogPath != "/var/log/app.log" {
+			t.Errorf("LogPath = %q, attendu \"/var/log/app.log\"", cfg.LogPath)
+		}
+	})
+
 	t.Run("port hors bornes rejeté", func(t *testing.T) {
 		for _, p := range []string{"0", "-1", "70000"} {
 			if _, err := parseFlags("test", []string{"-p", p}, io.Discard); err == nil {
@@ -83,4 +106,47 @@ func TestParseFlags(t *testing.T) {
 			t.Error("attendu une erreur pour un flag inconnu")
 		}
 	})
+}
+
+func TestSetupFileLogging(t *testing.T) {
+	t.Run("journalise dans le fichier", func(t *testing.T) {
+		restoreLogOutput(t)
+		path := filepath.Join(t.TempDir(), "logs", "app.log")
+
+		closeLog := setupFileLogging(path)
+		slog.Info("message de test")
+		closeLog()
+
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("lecture du journal : %v", err)
+		}
+		if got := string(b); !strings.Contains(got, "message de test") {
+			t.Errorf("journal = %q, il devrait contenir le message", got)
+		}
+	})
+
+	t.Run("repli sur la sortie d'erreur si le fichier est inaccessible", func(t *testing.T) {
+		restoreLogOutput(t)
+		// Un composant du chemin est un fichier : la création du répertoire échoue.
+		barrier := filepath.Join(t.TempDir(), "fichier")
+		if err := os.WriteFile(barrier, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		log.SetOutput(io.Discard) // l'avertissement attendu ne pollue pas la sortie du test
+
+		closeLog := setupFileLogging(filepath.Join(barrier, "app.log"))
+		defer closeLog()
+
+		// Le service doit continuer de tourner : pas de panique, et la
+		// journalisation reste utilisable.
+		slog.Info("message après repli")
+	})
+}
+
+// restoreLogOutput rétablit la sortie du logger standard à la fin du test, que
+// setupFileLogging modifie globalement.
+func restoreLogOutput(t *testing.T) {
+	t.Helper()
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
 }

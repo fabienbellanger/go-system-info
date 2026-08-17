@@ -1,10 +1,14 @@
 package sysinfo
 
 import (
+	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"reflect"
 	"runtime"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -693,4 +697,98 @@ func TestHistoryRingBuffer(t *testing.T) {
 			t.Errorf("got[%d].Mem = %v, attendu %v", i, got[i].Mem, w*10)
 		}
 	}
+}
+
+func TestSuperviseRelanceApresPanique(t *testing.T) {
+	silenceLogs(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	starts := make(chan int, samplerMaxPanics+1)
+	var attempts atomic.Int32
+
+	superviseWith(ctx, "test", time.Millisecond, func(context.Context) {
+		n := int(attempts.Add(1))
+		starts <- n
+		if n < 3 {
+			panic("relevé impossible")
+		}
+		<-ctx.Done() // troisième tentative : sampler sain, il tourne jusqu'à l'annulation
+	})
+
+	for want := 1; want <= 3; want++ {
+		select {
+		case got := <-starts:
+			if got != want {
+				t.Fatalf("tentative %d, attendu %d", got, want)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("la tentative %d n'a pas eu lieu : le sampler n'a pas été relancé", want)
+		}
+	}
+
+	// Le sampler sain ne doit pas être relancé une quatrième fois.
+	select {
+	case n := <-starts:
+		t.Fatalf("relance inattendue (tentative %d) alors que le sampler n'a pas paniqué", n)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestSuperviseAbandonneApresPaniquesRepetees(t *testing.T) {
+	silenceLogs(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var attempts atomic.Int32
+	done := make(chan struct{})
+
+	superviseWith(ctx, "test", time.Millisecond, func(context.Context) {
+		if int(attempts.Add(1)) == samplerMaxPanics {
+			close(done)
+		}
+		panic("panique déterministe")
+	})
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("seulement %d tentatives, attendu %d", attempts.Load(), samplerMaxPanics)
+	}
+
+	// Passé le plafond, plus aucune relance : la métrique est abandonnée, le
+	// reste du serveur continue de tourner.
+	time.Sleep(50 * time.Millisecond)
+	if got := attempts.Load(); got != samplerMaxPanics {
+		t.Errorf("tentatives = %d, attendu %d (plafond dépassé)", got, samplerMaxPanics)
+	}
+}
+
+func TestSuperviseSArreteALAnnulation(t *testing.T) {
+	silenceLogs(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	stopped := make(chan struct{})
+	superviseWith(ctx, "test", time.Minute, func(ctx context.Context) { // un délai long ne doit pas retarder l'arrêt
+		defer close(stopped)
+		<-ctx.Done()
+	})
+
+	cancel()
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("le sampler n'a pas rendu la main à l'annulation du contexte")
+	}
+}
+
+// silenceLogs évite que les piles de panique attendues polluent la sortie du test.
+func silenceLogs(t *testing.T) {
+	t.Helper()
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
 }

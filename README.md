@@ -82,6 +82,7 @@ une autre machine et l'exécuter sans dépendances supplémentaires.
 > make test-cover         # tests + rapport de couverture
 > make bench              # benchmarks des fonctions critiques
 > make lint               # go fmt + go vet
+> make logs               # suit le journal du service installé
 > make build-all          # binaires Linux, macOS (arm64/amd64) et Windows dans dist/
 > make docker-build       # image Docker (scratch)
 > make docker-run         # build + lancement du conteneur
@@ -97,6 +98,7 @@ une autre machine et l'exécuter sans dépendances supplémentaires.
 | `-host`         | Adresse d'écoute (vide = toutes les interfaces)                   | _(toutes)_               |
 | `-readonly`     | Mode lecture seule : désactive la terminaison de processus        | `false`                  |
 | `-trusted-host` | Noms d'hôte de confiance additionnels (en-tête Host), séparés `,` | _(aucun)_                |
+| `-log`          | Fichier de journal, avec rotation automatique                      | _(sortie d'erreur)_      |
 | `-h`            | Affiche l'aide                                                    |                          |
 
 > L'option `-r` accepte une durée au format Go : `500ms`, `5s`, `30s`, `1m`, etc.
@@ -116,6 +118,12 @@ une autre machine et l'exécuter sans dépendances supplémentaires.
 > recommandé dès que le serveur est exposé au-delà de `127.0.0.1` — il rend
 > défendable une écoute sur toutes les interfaces. Le front masque
 > automatiquement les boutons de terminaison dans ce mode.
+
+> L'option `-log` écrit les journaux dans un fichier plutôt que sur la sortie
+> d'erreur, avec **rotation automatique** (5 Mio, 3 archives `.1` à `.3`) : utile
+> pour un service au long cours là où le système ne borne pas lui-même la taille
+> du fichier de sortie (c'est le cas de launchd, contrairement à journald). Voir
+> la section [Journaux](#journaux).
 
 ### Protection de l'en-tête `Host` (DNS rebinding)
 
@@ -216,9 +224,10 @@ port `8222` avec un rafraîchissement de `3s`. Adaptez chemins, port et compte.
 >   Le binaire va dans `/usr/local/bin`.
 >
 > `make uninstall` fait l'inverse (réutilisez le même `PREFIX` qu'à
-> l'installation). Variables surchargeables : `PREFIX`, `PORT`, `REFRESH`,
-> `LABEL`. Les sections ci-dessous détaillent la procédure manuelle équivalente
-> (et le cas Windows, non couvert par `make`).
+> l'installation) et conserve les journaux. Variables surchargeables : `PREFIX`,
+> `PORT`, `REFRESH`, `LABEL`, `LOG_DIR` (macOS, défaut `~/Library/Logs`). Les
+> sections ci-dessous détaillent la procédure manuelle équivalente (et le cas
+> Windows, non couvert par `make`).
 
 ### Linux — `systemd`
 
@@ -301,15 +310,17 @@ Créez `~/Library/LaunchAgents/com.fabien.go-system-info.plist` :
         <string>8222</string>
         <string>-r</string>
         <string>3s</string>
+        <string>-log</string>
+        <string>/Users/VOTRE_UTILISATEUR/Library/Logs/go-system-info.log</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/tmp/go-system-info.log</string>
+    <string>/Users/VOTRE_UTILISATEUR/Library/Logs/go-system-info.stderr.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/go-system-info.err.log</string>
+    <string>/Users/VOTRE_UTILISATEUR/Library/Logs/go-system-info.stderr.log</string>
 </dict>
 </plist>
 ```
@@ -380,6 +391,53 @@ Unregister-ScheduledTask -TaskName "go-system-info" -Confirm:$false
 > Pour piloter vos propres applications depuis l'interface, remplacez
 > `-UserId "SYSTEM"` par votre compte (la terminaison ne vise que les processus
 > de l'utilisateur exécutant le serveur).
+
+## Journaux
+
+Le serveur journalise via `slog` (format texte : `2026/08/17 22:48:32 INFO
+requête HTTP method=GET …`). La destination dépend du mode de lancement :
+
+| Lancement                          | Journaux                                                          | Rotation                  |
+| ---------------------------------- | ----------------------------------------------------------------- | ------------------------- |
+| Terminal (`make serve`)            | sortie d'erreur du terminal                                       | —                         |
+| **macOS** (`make install`)         | `~/Library/Logs/go-system-info.log`                               | oui (binaire, via `-log`) |
+| **Linux** (`sudo make install`)    | journald → `journalctl -u go-system-info.service -f`              | oui (journald)            |
+| **Docker**                         | `docker logs <conteneur>`                                         | selon le pilote Docker    |
+| **Windows** (NSSM)                 | à configurer (`nssm set go-system-info AppStdout …`)              | selon NSSM                |
+
+Pour suivre le journal du service installé, quel que soit l'OS :
+
+```bash
+make logs
+```
+
+Avec `-log`, le binaire écrit lui-même dans le fichier indiqué et l'archive dès
+qu'il dépasse **5 Mio**, en conservant **3 archives** (`.log.1` … `.log.3`) :
+sans cela, launchd laisserait le fichier grossir indéfiniment (une ligne par
+requête HTTP). Le répertoire est créé au besoin, et un fichier inaccessible
+n'empêche pas le démarrage — le serveur retombe alors sur la sortie d'erreur.
+
+Sous macOS, `make install` renseigne aussi `StandardOutPath`/`StandardErrorPath`
+vers `~/Library/Logs/go-system-info.stderr.log` : ce second fichier ne reçoit que
+ce que le binaire écrit **directement** sur la sortie d'erreur, c'est-à-dire les
+piles des paniques fatales du runtime Go. Il reste normalement vide.
+
+### En cas de crash
+
+- **Panique dans un gestionnaire HTTP** : `net/http` l'intercepte, journalise la
+  pile et ferme la connexion concernée. Le serveur continue de tourner.
+- **Panique dans un relevé de métrique** : chaque échantillonneur (CPU, cœurs,
+  réseau, E/S disque, processus, volumes, température, batterie, historique)
+  tourne sous supervision. La panique est journalisée avec sa pile, puis
+  l'échantillonneur est relancé au bout de 5 s, cinq fois au plus ; passé ce
+  seuil, la métrique est abandonnée et le reste du serveur continue. Ces relevés
+  touchent des interfaces très dépendantes de la plateforme (SMC/IOKit, sysfs,
+  API Windows) : sans cela, la moindre panique tuait le processus entier.
+- **Arrêt fatal malgré tout** (SIGSEGV dans du code natif, `exit(1)` sur un port
+  déjà pris…) : le gestionnaire de service redémarre le binaire —
+  `KeepAlive` sous launchd, `Restart=on-failure` + `RestartSec=5` sous systemd.
+  Sous Docker, ajoutez `--restart unless-stopped` (absent de `make docker-run`,
+  qui utilise `--rm`).
 
 ## API REST
 
@@ -754,6 +812,9 @@ systeminfo/
 │   │   ├── temp_*.go          # Température CPU : gopsutil, ou lecture SMC directe sur Mac Intel
 │   │   ├── battery*.go        # Batterie par plateforme (IOKit / sysfs / GetSystemPowerStatus)
 │   │   └── sysinfo_test.go    # Tests + benchmarks du package sysinfo
+│   ├── logging/
+│   │   ├── logging.go         # Fichier de journal à rotation par taille (option -log)
+│   │   └── logging_test.go    # Tests du package logging
 │   └── server/
 │       ├── server.go          # Serveur HTTP, routage, API REST et flux SSE
 │       └── server_test.go     # Tests du package server

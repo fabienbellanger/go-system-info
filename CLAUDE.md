@@ -23,6 +23,7 @@ make test               # go test ./... -race
 make test-cover         # tests + rapport de couverture (cover.out)
 make bench              # benchmarks (go test -bench=. -benchmem)
 make lint               # go fmt ./... + go vet ./...
+make logs               # suit le journal du service installé (fichier macOS / journalctl Linux)
 make build-all          # binaires Linux/macOS(arm64,amd64)/Windows dans dist/
 make docker-build       # image Docker multi-stage → scratch
 make install            # installe le binaire + le service du système hôte
@@ -98,6 +99,12 @@ Trois couches, découplées pour la testabilité :
   collecteur est injecté derrière l'interface `systemCollector`, ce qui permet
   aux tests d'utiliser un `stubCollector` sans dépendre de la machine réelle.
   `ListenAndServe` gère les timeouts HTTP et l'arrêt gracieux (SIGINT/SIGTERM).
+
+- **`internal/logging`** — fichier de journal à rotation par taille (option
+  `-log`), sans dépendance. `main.go` ne reconfigure **pas** slog : le handler par
+  défaut écrit via le logger standard, donc `log.SetOutput` suffit et **préserve
+  le format** des messages (et capte en bonus les paniques de handler que
+  `net/http` journalise via `log.Printf`).
 
 - **`public/`** — front sans build ni framework. `app.js` consomme `/api/stream`
   (SSE) via `EventSource` ; pas de polling. L'état de connexion (badge « Hors
@@ -188,6 +195,23 @@ Trois couches, découplées pour la testabilité :
       **inversée** (rouge sous 20 %, orange sous 40 %). D'où le paramètre
       `color` de `updateGauge` : ne pas laisser `colorFor` teinter la jauge en
       rouge à 95 % de charge.
+- **Robustesse des samplers** : `Collector.Start` lance chaque échantillonneur via
+  `supervise`, qui intercepte les paniques (`runGuarded` journalise la pile),
+  relance après `samplerRestartDelay` et abandonne la métrique après
+  `samplerMaxPanics`. Les relevés touchent des interfaces très dépendantes de la
+  plateforme (SMC/IOKit via purego, sysfs, API Windows) : sans ce filet, une
+  panique dans un relevé tuait le processus entier, serveur web compris. Ne pas
+  revenir à un `go s.run(ctx)` nu. Limite assumée : un SIGSEGV levé dans du code
+  natif reste fatal (aucun recover Go ne le rattrape).
+- **Journaux du service** : sous macOS, `make install` écrit dans
+  `~/Library/Logs/` — pas `/tmp`, purgé au redémarrage — et passe `-log` au
+  binaire pour que la **rotation** soit assurée (launchd, contrairement à
+  journald, ne borne pas la taille du fichier, et chaque requête HTTP produit une
+  ligne). `StandardOutPath`/`StandardErrorPath` pointent vers un **second**
+  fichier `.stderr.log` : ils ne doivent pas viser le fichier `-log`, que le
+  binaire renomme lors des rotations sous le nez de launchd. Ce `.stderr.log` ne
+  reçoit que les piles des paniques fatales du runtime (écrites directement sur
+  fd 2, hors de slog) et reste normalement vide.
 - **SSE et WriteTimeout** : `handleStream` neutralise le `WriteTimeout` du serveur
   pour la connexion longue via `http.NewResponseController`. Le `statusRecorder`
   implémente `Unwrap()` pour que `Flush`/`SetWriteDeadline` traversent le wrapper.

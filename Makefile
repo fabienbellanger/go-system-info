@@ -1,6 +1,6 @@
 .PHONY: serve watch build build-linux build-darwin-arm64 build-darwin-amd64 build-windows \
         build-all test test-cover bench lint fix tidy update-deps clean \
-        docker-build docker-run install install-darwin install-linux uninstall
+        docker-build docker-run install install-darwin install-linux uninstall logs
 
 BIN_NAME := go-system-info
 SRC_DIR  := .
@@ -28,6 +28,13 @@ INSTALL_BIN := $(BINDIR)/$(BIN_NAME)
 LABEL       ?= com.fabien.go-system-info
 PLIST_PATH  := $(HOME)/Library/LaunchAgents/$(LABEL).plist
 UNIT_PATH   := /etc/systemd/system/$(BIN_NAME).service
+# Journaux macOS : ~/Library/Logs est l'emplacement attendu par le système (visible
+# dans Console.app) et, contrairement à /tmp, il survit au redémarrage. Le binaire
+# y écrit lui-même via -log, avec rotation ; launchd n'y dépose que la sortie
+# d'erreur brute (paniques fatales du runtime Go). Sous Linux, journald s'en charge.
+LOG_DIR     ?= $(HOME)/Library/Logs
+LOG_FILE    := $(LOG_DIR)/$(BIN_NAME).log
+STDERR_FILE := $(LOG_DIR)/$(BIN_NAME).stderr.log
 
 serve:
 	go run $(SRC_DIR) -p $(PORT) -r $(REFRESH)
@@ -115,7 +122,7 @@ install-darwin: build
 	@if [ "$$(id -u)" -eq 0 ]; then echo "Sur macOS, lancez « make install » SANS sudo : le LaunchAgent est installé pour votre session (gui/\$$(id -u))."; exit 1; fi
 	install -d "$(BINDIR)"
 	install -m 0755 "$(DIST_DIR)/$(BIN_NAME)" "$(INSTALL_BIN)"
-	@mkdir -p "$(HOME)/Library/LaunchAgents"
+	@mkdir -p "$(HOME)/Library/LaunchAgents" "$(LOG_DIR)"
 	printf '%s\n' \
 	  '<?xml version="1.0" encoding="UTF-8"?>' \
 	  '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
@@ -130,15 +137,17 @@ install-darwin: build
 	  '        <string>$(PORT)</string>' \
 	  '        <string>-r</string>' \
 	  '        <string>$(REFRESH)</string>' \
+	  '        <string>-log</string>' \
+	  '        <string>$(LOG_FILE)</string>' \
 	  '    </array>' \
 	  '    <key>RunAtLoad</key>' \
 	  '    <true/>' \
 	  '    <key>KeepAlive</key>' \
 	  '    <true/>' \
 	  '    <key>StandardOutPath</key>' \
-	  '    <string>/tmp/$(BIN_NAME).log</string>' \
+	  '    <string>$(STDERR_FILE)</string>' \
 	  '    <key>StandardErrorPath</key>' \
-	  '    <string>/tmp/$(BIN_NAME).err.log</string>' \
+	  '    <string>$(STDERR_FILE)</string>' \
 	  '</dict>' \
 	  '</plist>' \
 	  > "$(PLIST_PATH)"
@@ -146,6 +155,7 @@ install-darwin: build
 	launchctl bootstrap gui/$$(id -u) "$(PLIST_PATH)"
 	launchctl enable gui/$$(id -u)/$(LABEL)
 	@echo "LaunchAgent installé : $(PLIST_PATH) (binaire : $(INSTALL_BIN))"
+	@echo "Journal : $(LOG_FILE) (rotation automatique) — paniques fatales : $(STDERR_FILE)"
 
 install-linux: build
 	@if [ "$$(id -u)" -ne 0 ]; then echo "Lancez : sudo make install"; exit 1; fi
@@ -174,12 +184,23 @@ install-linux: build
 	systemctl enable --now $(BIN_NAME).service
 	@echo "Service systemd installé : $(UNIT_PATH) (binaire : $(INSTALL_BIN))"
 
+# Suit le journal du service installé : fichier tournant écrit par le binaire sous
+# macOS, journald sous Linux.
+logs:
+ifeq ($(OS),Darwin)
+	tail -f "$(LOG_FILE)"
+else ifeq ($(OS),Linux)
+	journalctl -u $(BIN_NAME).service -f
+else
+	@echo "make logs : non pris en charge sur $(OS)."; exit 1
+endif
+
 # Arrête, désactive et supprime le service + le binaire installés par « install ».
 uninstall:
 ifeq ($(OS),Darwin)
 	-launchctl bootout gui/$$(id -u) "$(PLIST_PATH)" 2>/dev/null
 	rm -f "$(PLIST_PATH)" "$(INSTALL_BIN)"
-	@echo "LaunchAgent et binaire supprimés."
+	@echo "LaunchAgent et binaire supprimés (journaux conservés dans $(LOG_DIR))."
 else ifeq ($(OS),Linux)
 	@if [ "$$(id -u)" -ne 0 ]; then echo "Lancez : sudo make uninstall"; exit 1; fi
 	-systemctl disable --now $(BIN_NAME).service
