@@ -11,11 +11,7 @@ import (
 func TestOpenCreeLeRepertoire(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "logs", "app.log")
 
-	l, err := Open(path, 0, 0)
-	if err != nil {
-		t.Fatalf("Open : %v", err)
-	}
-	defer l.Close()
+	l := openLogger(t, path, 0, 0)
 
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("journal absent : %v", err)
@@ -34,11 +30,7 @@ func TestWriteAjouteAuFichierExistant(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	l, err := Open(path, DefaultMaxBytes, DefaultKeep)
-	if err != nil {
-		t.Fatalf("Open : %v", err)
-	}
-	defer l.Close()
+	l := openLogger(t, path, DefaultMaxBytes, DefaultKeep)
 
 	if _, err := l.Write([]byte("nouveau\n")); err != nil {
 		t.Fatalf("Write : %v", err)
@@ -55,11 +47,7 @@ func TestRotationDecaleLesArchives(t *testing.T) {
 
 	// Seuil de 6 octets : chaque ligne en fait 5, donc la suivante déclenche la
 	// rotation — un fichier par ligne.
-	l, err := Open(path, 6, 2)
-	if err != nil {
-		t.Fatalf("Open : %v", err)
-	}
-	defer l.Close()
+	l := openLogger(t, path, 6, 2)
 
 	for _, line := range []string{"aaaa\n", "bbbb\n", "cccc\n", "dddd\n"} {
 		if _, err := l.Write([]byte(line)); err != nil {
@@ -87,11 +75,7 @@ func TestRotationDecaleLesArchives(t *testing.T) {
 func TestRotationSansArchive(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "app.log")
 
-	l, err := Open(path, 6, 0)
-	if err != nil {
-		t.Fatalf("Open : %v", err)
-	}
-	defer l.Close()
+	l := openLogger(t, path, 6, 0)
 
 	for _, line := range []string{"aaaa\n", "bbbb\n"} {
 		if _, err := l.Write([]byte(line)); err != nil {
@@ -110,11 +94,7 @@ func TestRotationSansArchive(t *testing.T) {
 func TestEcritureLongueNonTronquee(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "app.log")
 
-	l, err := Open(path, 8, 1)
-	if err != nil {
-		t.Fatalf("Open : %v", err)
-	}
-	defer l.Close()
+	l := openLogger(t, path, 8, 1)
 
 	// Un enregistrement plus grand que le seuil (une pile de panique, typiquement)
 	// est écrit d'un bloc : le journal dépasse maxBytes plutôt que de couper.
@@ -134,11 +114,7 @@ func TestEcritureLongueNonTronquee(t *testing.T) {
 func TestWriteConcurrent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "app.log")
 
-	l, err := Open(path, 64, 2)
-	if err != nil {
-		t.Fatalf("Open : %v", err)
-	}
-	defer l.Close()
+	l := openLogger(t, path, 64, 2)
 
 	var wg sync.WaitGroup
 	for i := range 20 {
@@ -170,21 +146,33 @@ func TestCloseIdempotent(t *testing.T) {
 func TestWriteApresCloseReouvre(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "app.log")
 
-	l, err := Open(path, 0, 0)
-	if err != nil {
-		t.Fatalf("Open : %v", err)
-	}
+	l := openLogger(t, path, 0, 0)
 	if err := l.Close(); err != nil {
 		t.Fatalf("Close : %v", err)
 	}
 	if _, err := l.Write([]byte("après fermeture\n")); err != nil {
 		t.Fatalf("Write : %v", err)
 	}
-	defer l.Close()
 
 	if got := readFile(t, path); got != "après fermeture\n" {
 		t.Errorf("contenu = %q, attendu \"après fermeture\\n\"", got)
 	}
+}
+
+// openLogger ouvre un journal et programme sa fermeture en fin de test. Close
+// étant idempotent, l'appeler en plus dans un test ne pose pas de problème.
+func openLogger(t *testing.T, path string, maxBytes int64, keep int) *File {
+	t.Helper()
+	l, err := Open(path, maxBytes, keep)
+	if err != nil {
+		t.Fatalf("Open : %v", err)
+	}
+	t.Cleanup(func() {
+		if err := l.Close(); err != nil {
+			t.Errorf("Close : %v", err)
+		}
+	})
+	return l
 }
 
 func readFile(t *testing.T, path string) string {
