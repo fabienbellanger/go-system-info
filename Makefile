@@ -8,7 +8,11 @@ DIST_DIR := dist
 VERSION  := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS  := -s -w -X main.version=$(VERSION)
 CGO      := CGO_ENABLED=0
-PORT     := 8222
+# Deux ports distincts pour ne jamais entrer en conflit avec le service installé :
+# PORT_PROD sert au binaire installé (install/docker), PORT_DEV aux lancements
+# locaux (serve/watch). Surchargeables séparément.
+PORT_PROD ?= 8222
+PORT_DEV  ?= 8223
 REFRESH  := 3s
 IMAGE    := go-system-info
 
@@ -37,10 +41,10 @@ LOG_FILE    := $(LOG_DIR)/$(BIN_NAME).log
 STDERR_FILE := $(LOG_DIR)/$(BIN_NAME).stderr.log
 
 serve:
-	go run $(SRC_DIR) -p $(PORT) -r $(REFRESH)
+	go run $(SRC_DIR) -p $(PORT_DEV) -r $(REFRESH)
 
 watch:
-	watchexec -r go run $(SRC_DIR) -p $(PORT) -r $(REFRESH)
+	watchexec -r go run $(SRC_DIR) -p $(PORT_DEV) -r $(REFRESH)
 
 build-linux:
 	GOOS=linux GOARCH=amd64 $(CGO) go build -ldflags="$(LDFLAGS)" \
@@ -64,7 +68,7 @@ docker-build:
 	docker build --build-arg VERSION=$(VERSION) -t $(IMAGE):$(VERSION) -t $(IMAGE):latest .
 
 docker-run: docker-build
-	docker run --rm -p $(PORT):$(PORT) $(IMAGE):latest -p $(PORT) -r $(REFRESH)
+	docker run --rm -p $(PORT_PROD):$(PORT_PROD) $(IMAGE):latest -p $(PORT_PROD) -r $(REFRESH)
 
 test:
 	go test ./... -race
@@ -108,7 +112,7 @@ build:
 # - Linux : service systemd (nécessite « sudo make install ») ; binaire dans
 #   /usr/local/bin. Tourne sous l'utilisateur appelant ($SUDO_USER) pour que la
 #   terminaison reste utile.
-# Surchageable : PREFIX, PORT, REFRESH, LABEL.
+# Surchageable : PREFIX, PORT_PROD, REFRESH, LABEL.
 install:
 ifeq ($(OS),Darwin)
 	@$(MAKE) install-darwin
@@ -134,7 +138,7 @@ install-darwin: build
 	  '    <array>' \
 	  '        <string>$(INSTALL_BIN)</string>' \
 	  '        <string>-p</string>' \
-	  '        <string>$(PORT)</string>' \
+	  '        <string>$(PORT_PROD)</string>' \
 	  '        <string>-r</string>' \
 	  '        <string>$(REFRESH)</string>' \
 	  '        <string>-log</string>' \
@@ -169,7 +173,7 @@ install-linux: build
 	  '' \
 	  '[Service]' \
 	  'Type=simple' \
-	  'ExecStart=$(INSTALL_BIN) -p $(PORT) -r $(REFRESH)' \
+	  'ExecStart=$(INSTALL_BIN) -p $(PORT_PROD) -r $(REFRESH)' \
 	  'Restart=on-failure' \
 	  'RestartSec=5' \
 	  "User=$$RUN_USER" \

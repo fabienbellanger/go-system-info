@@ -415,8 +415,8 @@ header {
 .card-title {
     display: flex;
     align-items: center;
-    gap: 0.55rem;
-    font-size: 0.72rem;
+    gap: 0.65rem;
+    font-size: 0.95rem;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.09em;
@@ -425,7 +425,7 @@ header {
 }
 
 .card-title .icon {
-    font-size: 1rem;
+    font-size: 1.5rem;
 }
 
 /* ---------- Circular gauge ---------- */

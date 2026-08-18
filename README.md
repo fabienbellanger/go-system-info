@@ -76,7 +76,7 @@ une autre machine et l'exécuter sans dépendances supplémentaires.
 > Un `Makefile` regroupe les tâches courantes. Par exemple :
 >
 > ```bash
-> make serve              # go run avec port et intervalle configurables
+> make serve              # go run sur le port de dev (8223), intervalle configurable
 > make watch              # relance automatique au changement (watchexec)
 > make test               # tests avec détecteur de data races
 > make test-cover         # tests + rapport de couverture
@@ -225,7 +225,7 @@ port `8222` avec un rafraîchissement de `3s`. Adaptez chemins, port et compte.
 >
 > `make uninstall` fait l'inverse (réutilisez le même `PREFIX` qu'à
 > l'installation) et conserve les journaux. Variables surchargeables : `PREFIX`,
-> `PORT`, `REFRESH`, `LABEL`, `LOG_DIR` (macOS, défaut `~/Library/Logs`). Les
+> `PORT_PROD`, `REFRESH`, `LABEL`, `LOG_DIR` (macOS, défaut `~/Library/Logs`). Les
 > sections ci-dessous détaillent la procédure manuelle équivalente (et le cas
 > Windows, non couvert par `make`).
 

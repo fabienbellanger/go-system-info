@@ -14,10 +14,12 @@ La langue du projet est le **français** : commentaires, messages de log le sont
 
 ## Commandes
 
-Le `Makefile` regroupe les tâches courantes (variables `PORT=8222`, `REFRESH=3s`) :
+Le `Makefile` regroupe les tâches courantes. Deux ports distincts évitent tout
+conflit entre le service installé et un lancement local : `PORT_PROD=8222`
+(install / docker) et `PORT_DEV=8223` (serve / watch) ; `REFRESH=3s` :
 
 ```bash
-make serve              # go run . -p 8222 -r 3s
+make serve              # go run . -p 8223 -r 3s
 make watch              # relance auto au changement (nécessite watchexec)
 make test               # go test ./... -race
 make test-cover         # tests + rapport de couverture (cover.out)
@@ -68,7 +70,7 @@ Windows) — d'où `KillSignal=SIGTERM` côté systemd et l'envoi de `Ctrl+C` c�
 NSSM. **Choix de l'utilisateur du service = périmètre de
 `POST /api/processes/kill`** : `killOwnedProcess` ne tue que les processus du
 compte qui exécute le serveur (cf. README, section « Lancer en tant que
-service »). Variables surchargeables : `PREFIX`, `PORT`, `REFRESH`, `LABEL`.
+service »). Variables surchargeables : `PREFIX`, `PORT_PROD`, `REFRESH`, `LABEL`.
 
 ## Architecture
 
